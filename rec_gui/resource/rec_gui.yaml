@@ -1,0 +1,98 @@
+# REC GUI Configuration File
+# Default settings for the MCAP Recording GUI
+
+output:
+  # Default output directory for recordings
+  directory: "${HOME}/.rec_gui/recordings"
+  # Naming convention for output files: {timestamp}, {date}, {time}, {counter}
+  filename_template: "recording_{timestamp}.mcap"
+  # Auto-create output directory if it doesn't exist
+  auto_create: true
+
+recording:
+  # Default recording profiles
+  profiles:
+    default:
+      description: "Default recording profile - all topics"
+      topics: []
+      compression: "zstd"
+      chunk_size: 52428800  # 50 MB
+
+    bosch01:
+      description: "Bosch01 - Lexus3 configuration"
+      output_directory: "/mnt/bag/"
+      output_prefix: "lexus3_"
+      compression: "zstd"
+      compression_level: 6
+      chunk_size: 10485760  # 10 MB
+      topics:
+        - /lexus3/gps/nova/current_pose
+        - /lexus3/gps/nova/fix
+        - /lexus3/gps/nova/imu
+        - /lexus3/gps/nova/inspvax
+        - /lexus3/os_center/points
+        - /lexus3/os_left/points
+        - /lexus3/os_right/points
+        - /lexus3/zed2i/zed_node/left/image_rect_color/compressed
+        - /lexus3/vehicle_speed_kmph
+        - /lexus3/vehicle_status
+        - /nissan9/battery/soc
+        - /nissan9/battery/soh
+        - /tf
+        - /tf_static
+
+  # Default selected profile
+  default_profile: "default"
+
+  # MCAP-specific settings
+  mcap:
+    compression: "zstd"
+    compression_level: 6  # 1-22 for zstd
+    chunk_size: 52428800  # 50 MB in bytes
+
+# Topic selection (leave empty to show all available topics)
+topics:
+  # Include patterns (regex)
+  include: []
+  # Exclude patterns (regex)
+  exclude: []
+  # Enable/disable topic watching
+  watch_enabled: true
+  # Refresh interval in seconds
+  refresh_interval: 2
+
+# GUI Settings
+gui:
+  # Window dimensions
+  window_width: 1200
+  window_height: 800
+  # Auto-refresh topic list
+  auto_refresh_topics: true
+  # Show topic message rates
+  show_message_rates: true
+  # Show topic message types
+  show_message_types: true
+  # Log file location
+  log_file: "${HOME}/.rec_gui/logs/rec_gui.log"
+  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  log_level: "INFO"
+
+# ROS 2 Node Configuration
+ros2:
+  # Node name
+  node_name: "rec_gui"
+  # QoS profile for subscriptions
+  qos_history_depth: 100
+  # Use intra-process communication
+  use_intra_process: true
+
+# Advanced Settings
+advanced:
+  # Enable experimental features
+  experimental_features: false
+  # Maximum concurrent recordings
+  max_concurrent_recordings: 1
+  # Save configuration on exit
+  save_config_on_exit: true
+  # Confirm before deleting recordings
+  confirm_delete: true

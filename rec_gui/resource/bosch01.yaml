@@ -1,0 +1,54 @@
+node_name: rec_gui
+output_directory: "/mnt/bag/"
+output_prefix: "lexus3_"
+output_suffix: "${DATE}_${TIME}"
+file_chunksize: 10485760
+compression_format: zstd
+compression_level: fastest
+
+topics:
+  - name: /lexus3/gps/nova/current_pose
+    compress: true
+    rate: 0
+  - name: /lexus3/gps/nova/fix
+    compress: true
+    rate: 0
+  - name: /lexus3/gps/nova/imu
+    compress: true
+    rate: 0
+  - name: /lexus3/gps/nova/inspvax
+    compress: true
+    rate: 0
+  - name: /lexus3/os_center/points
+    compress: true
+    rate: 0
+  - name: /lexus3/os_left/points
+    compress: true
+    rate: 0
+  - name: /lexus3/os_right/points
+    compress: true
+    rate: 0
+  - name: /lexus3/zed2i/zed_node/left/image_rect_color/compressed
+    compress: true
+    rate: 0
+  - name: /lexus3/vehicle_speed_kmph
+    compress: false
+    rate: 0
+  - name: /lexus3/vehicle_status
+    compress: false
+    rate: 0
+  - name: /tf
+    compress: false
+    rate: 0
+  - name: /tf_static
+    compress: false
+    rate: 0
+  - name: /nissan9/battery/soh
+    compress: false
+    rate: 0
+  - name: /nissan9/battery/soc
+    compress: false
+    rate: 0
+
+max_duration: 0
+enable_status_publishing: false
