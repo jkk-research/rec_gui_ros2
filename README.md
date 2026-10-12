@@ -12,6 +12,10 @@
   <img alt="ROS 2: Jazzy" src="https://img.shields.io/badge/ros2-jazzy-34aec5?style=flat-square">
 </p>
 
+<p align="center">
+  <img src="rec_gui/resource/rec_gui01.png" alt="rec_gui" width="300">
+</p>
+
 # Installation
 
 ## Clone
@@ -24,6 +28,14 @@ cd ~/ros2_ws/src
 
 ```bash
 git clone https://github.com/jkk-research/rec_gui
+```
+
+## Dependencies
+
+The GUI is built with [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter):
+
+```bash
+pip install customtkinter
 ```
 
 ## Build

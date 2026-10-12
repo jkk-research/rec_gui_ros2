@@ -4,7 +4,7 @@
 output:
   # Default output directory for recordings
   directory: "${HOME}/.rec_gui/recordings"
-  # Naming convention for output files: {timestamp}, {date}, {time}, {counter}
+  # Naming convention for output files: {timestamp}, {date}, {time}
   filename_template: "recording_{timestamp}.mcap"
   # Auto-create output directory if it doesn't exist
   auto_create: true
@@ -23,7 +23,7 @@ recording:
       output_directory: "/mnt/bag/"
       output_prefix: "lexus3_"
       compression: "zstd"
-      compression_level: 6
+      compression_level: "fastest"
       chunk_size: 10485760  # 10 MB
       topics:
         - /lexus3/gps/nova/current_pose
@@ -44,10 +44,13 @@ recording:
   # Default selected profile
   default_profile: "default"
 
-  # MCAP-specific settings
+  # Message cache of ros2 bag record in bytes (--max-cache-size)
+  max_cache_size: 1048576000
+
+  # MCAP writer options (--storage-config-file), profiles can override them
   mcap:
-    compression: "zstd"
-    compression_level: 6  # 1-22 for zstd
+    compression: "zstd"  # none, lz4, zstd
+    compression_level: "default"  # fastest, fast, default, slow, slowest
     chunk_size: 52428800  # 50 MB in bytes
 
 # Topic selection (leave empty to show all available topics)
@@ -64,8 +67,8 @@ topics:
 # GUI Settings
 gui:
   # Window dimensions
-  window_width: 1200
-  window_height: 800
+  window_width: 1100
+  window_height: 760
   # Auto-refresh topic list
   auto_refresh_topics: true
   # Show topic message rates

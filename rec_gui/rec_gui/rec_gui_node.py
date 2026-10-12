@@ -1,11 +1,12 @@
 """Main ROS 2 node for the MCAP recording GUI."""
 
-import sys
+import signal
 import tkinter as tk
 from pathlib import Path
 from typing import List, Optional
 import subprocess
-import threading
+
+import customtkinter as ctk
 
 try:
     import rclpy
@@ -36,7 +37,8 @@ class RecRecorderNode(Node):
         self.recording = False
         self.available_topics: List[str] = []
         self.recording_process: Optional[subprocess.Popen] = None
-        self.recording_thread: Optional[threading.Thread] = None
+        self.recording_log: Optional[Path] = None
+        self.last_output: Optional[Path] = None
 
         self.declare_parameter(
             "config_file",
@@ -57,61 +59,56 @@ class RecRecorderNode(Node):
             return []
 
     def start_recording(
-        self, topics: List[str], profile: str = "default"
-    ) -> None:
+        self,
+        topics: List[str],
+        profile: str = "default",
+        output_dir: Optional[str] = None,
+    ) -> List[str]:
         """
         Start recording specified topics.
 
         Args:
             topics: List of topic names to record
             profile: Recording profile name
+            output_dir: Output directory, defaults to the configured one
+
+        Returns:
+            The ros2 bag record command that was started
         """
         if self.recording:
-            self.get_logger().warning("Recording already in progress")
-            return
+            raise RuntimeError("Recording already in progress")
 
-        self.recording = True
         self.get_logger().info(
             f"Starting recording of {len(topics)} topics with profile '{profile}'"
         )
-        self.get_logger().info(f"Topics: {', '.join(topics)}")
 
-        # Get profile configuration
-        profiles = self.config.get_nested("recording", "profiles")
-        profile_data = profiles.get(profile, {})
+        cmd = self.config.build_record_command(topics, profile, output_dir)
+        self.last_output = Path(cmd[cmd.index("-o") + 1])
+        self.last_output.parent.mkdir(parents=True, exist_ok=True)
+        self.config.write_storage_config(profile)
+        self.get_logger().info(" ".join(cmd))
 
-        # Get output settings
-        output_dir = profile_data.get("output_directory") or str(self.config.get_output_directory())
-        output_prefix = profile_data.get("output_prefix", "recording")
-        compression = profile_data.get("compression", "zstd")
+        # ros2 bag record logs a lot, a pipe nobody reads would block it
+        self.recording_log = self.config.get_log_directory() / "ros2_bag_record.log"
+        with open(self.recording_log, "w") as log:
+            self.recording_process = subprocess.Popen(
+                cmd, stdout=log, stderr=subprocess.STDOUT
+            )
+        self.recording = True
+        return cmd
 
-        # Create output directory
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
+    def recording_exit_code(self) -> Optional[int]:
+        """Get the exit code of the recording process, None while it runs."""
+        if self.recording_process is None:
+            return None
+        return self.recording_process.poll()
 
-        # Build ros2 bag record command
-        cmd = [
-            "ros2", "bag", "record",
-            "-o", f"{output_dir}/{output_prefix}",
-            "-c", compression,
-            *topics,
-        ]
-
-        # Run recording in background thread
-        def run_recording():
-            try:
-                self.recording_process = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
-                )
-                self.recording_process.wait()
-            except Exception as e:
-                self.get_logger().error(f"Recording error: {e}")
-                self.recording = False
-
-        self.recording_thread = threading.Thread(target=run_recording, daemon=True)
-        self.recording_thread.start()
+    def recording_log_tail(self, lines: int = 8) -> str:
+        """Get the last lines ros2 bag record printed."""
+        try:
+            return "\n".join(self.recording_log.read_text().splitlines()[-lines:])
+        except (AttributeError, OSError):
+            return ""
 
     def pause_recording(self) -> None:
         """Pause the current recording."""
@@ -129,13 +126,17 @@ class RecRecorderNode(Node):
 
         self.recording = False
 
-        # Terminate the recording process
+        # SIGINT lets ros2 bag record close the MCAP file and write metadata
         if self.recording_process and self.recording_process.poll() is None:
-            self.recording_process.terminate()
+            self.recording_process.send_signal(signal.SIGINT)
             try:
-                self.recording_process.wait(timeout=5)
+                self.recording_process.wait(timeout=10)
             except subprocess.TimeoutExpired:
-                self.recording_process.kill()
+                self.recording_process.terminate()
+                try:
+                    self.recording_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.recording_process.kill()
             self.get_logger().info("Recording stopped")
         else:
             self.get_logger().info("No active recording process to stop")
@@ -154,7 +155,7 @@ def main(args=None):
     try:
         node = RecRecorderNode(config)
 
-        root = tk.Tk()
+        root = ctk.CTk()
         gui = RecorderGUI(root, config, node)
 
         try:
@@ -162,7 +163,10 @@ def main(args=None):
         except Exception as e:
             print(f"GUI error: {e}")
         finally:
-            root.destroy()
+            try:
+                root.destroy()
+            except tk.TclError:
+                pass  # window already closed
 
     except Exception as e:
         print(f"Failed to create node: {e}")

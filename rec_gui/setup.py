@@ -24,6 +24,7 @@ setup(
     install_requires=[
         "setuptools",
         "pyyaml",
+        "customtkinter",
     ],
     extras_require={
         "dev": [

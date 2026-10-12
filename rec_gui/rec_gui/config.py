@@ -1,9 +1,15 @@
 """Configuration management for rec_gui package."""
 
 import os
+import re
 import yaml
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+# Values accepted by the rosbag2 MCAP storage plugin (--storage-config-file)
+MCAP_COMPRESSION = {"none": "None", "lz4": "Lz4", "zstd": "Zstd"}
+MCAP_COMPRESSION_LEVELS = ("Fastest", "Fast", "Default", "Slow", "Slowest")
 
 
 class RecorderConfig:
@@ -89,9 +95,10 @@ class RecorderConfig:
             'recording': {
                 'profiles': {},  # Profiles ONLY from YAML
                 'default_profile': 'default',
+                'max_cache_size': 1048576000,
                 'mcap': {
                     'compression': 'zstd',
-                    'compression_level': 6,
+                    'compression_level': 'default',
                     'chunk_size': 52428800,
                 },
             },
@@ -178,3 +185,89 @@ class RecorderConfig:
         directory = log_file.parent
         directory.mkdir(parents=True, exist_ok=True)
         return directory
+
+    def get_profile(self, name: str) -> Dict[str, Any]:
+        """Get the settings of a recording profile (empty if unknown)."""
+        profiles = self.get_nested("recording", "profiles") or {}
+        return profiles.get(name) or {}
+
+    def get_storage_config_file(self, profile: str) -> Path:
+        """Get the MCAP writer options file passed to --storage-config-file."""
+        custom = self.get_profile(profile).get("storage_config_file")
+        if custom:
+            return Path(custom)
+        safe_name = re.sub(r"[^\w.-]", "_", profile)
+        return Path.home() / ".rec_gui" / f"mcap_writer_options_{safe_name}.yaml"
+
+    def get_mcap_options(self, profile: str) -> Dict[str, Any]:
+        """Get the MCAP writer options (chunkSize, compression, compressionLevel)."""
+        profile_data = self.get_profile(profile)
+
+        # A profile can point to its own writer options file
+        custom = profile_data.get("storage_config_file")
+        if custom and Path(custom).is_file():
+            with open(custom, "r") as f:
+                return yaml.safe_load(f) or {}
+
+        defaults = self.get_nested("recording", "mcap") or {}
+
+        def setting(key, fallback):
+            return profile_data.get(key, defaults.get(key, fallback))
+
+        compression = str(setting("compression", "zstd")).lower()
+        level = str(setting("compression_level", "default")).capitalize()
+        return {
+            "chunkSize": int(setting("chunk_size", 52428800)),
+            "compression": MCAP_COMPRESSION.get(compression, "Zstd"),
+            "compressionLevel": level if level in MCAP_COMPRESSION_LEVELS else "Default",
+        }
+
+    def write_storage_config(self, profile: str) -> Path:
+        """Write the MCAP writer options file, unless the profile brings its own."""
+        path = self.get_storage_config_file(profile)
+        if not self.get_profile(profile).get("storage_config_file"):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w") as f:
+                yaml.dump(self.get_mcap_options(profile), f, default_flow_style=False)
+        return path
+
+    def get_recording_name(self, profile: str, when: Optional[datetime] = None) -> str:
+        """Get the name of the next recording, placeholders filled in."""
+        when = when or datetime.now()
+        profile_data = self.get_profile(profile)
+
+        template = profile_data.get("filename_template")
+        if not template and "output_prefix" in profile_data:
+            template = f"{profile_data['output_prefix']}{{timestamp}}.mcap"
+        if not template:
+            template = self.get("output.filename_template", "recording_{timestamp}.mcap")
+
+        date = when.strftime("%Y_%m_%d")
+        time = when.strftime("%H_%M_%S")
+        return (
+            template.replace("{timestamp}", f"{date}-{time}")
+            .replace("{date}", date)
+            .replace("{time}", time)
+        )
+
+    def build_record_command(
+        self,
+        topics: List[str],
+        profile: str,
+        output_dir: Optional[str] = None,
+        when: Optional[datetime] = None,
+    ) -> List[str]:
+        """Build the ros2 bag record command used for a recording."""
+        output_dir = Path(output_dir or self.get_output_directory())
+        max_cache_size = self.get_profile(profile).get(
+            "max_cache_size", self.get("recording.max_cache_size", 1048576000)
+        )
+
+        return [
+            "ros2", "bag", "record",
+            "-s", "mcap",
+            "-o", str(output_dir / self.get_recording_name(profile, when)),
+            "--max-cache-size", str(max_cache_size),
+            "--storage-config-file", str(self.get_storage_config_file(profile)),
+            *topics,
+        ]

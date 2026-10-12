@@ -1,24 +1,39 @@
-"""Modern, minimalist GUI for MCAP recording application."""
+"""CustomTkinter GUI for the MCAP recording application."""
 
+import os
+import shlex
+import shutil
+import subprocess
 import tkinter as tk
-from tkinter import font as tkfont, messagebox, filedialog
+from tkinter import messagebox, filedialog
 from datetime import datetime
 from typing import Dict, List, Optional
 from enum import Enum
 from pathlib import Path
-import os
+
+import customtkinter as ctk
 
 from .config import RecorderConfig
 
-# ── Modern Color Palette ───────────────────────────────────────────────────
-BG_MAIN = "#FFFFFF"
-BG_SECTION = "#F5F5F5"
-TEXT_PRIMARY = "#212121"
-TEXT_SECONDARY = "#757575"
-BORDER_COLOR = "#BDBDBD"
-ACCENT_GREEN = "#4CAF50"
-ACCENT_RED = "#F44336"
-ACCENT_BLUE = "#2196F3"
+# ── Color Palette (light, dark) ────────────────────────────────────────────
+BG_INSET = ("#F9F9FA", "#1D1E1E")
+TEXT_PRIMARY = ("gray10", "#DCE4EE")
+TEXT_SECONDARY = ("gray40", "#9A9A9A")
+BORDER_COLOR = ("#979DA2", "#565B5E")
+HOVER_OUTLINE = ("gray78", "#3A3A3A")
+ACCENT_BLUE = ("#3B8ED0", "#1F6AA5")
+ACCENT_BLUE_HOVER = ("#36719F", "#144870")
+ACCENT_BLUE_OFF = ("#9DC3E2", "#3A5F7D")
+ACCENT_GREEN = ("#2CC985", "#2FA572")
+ACCENT_RED = ("#D9443C", "#E5534B")
+ACCENT_ORANGE = "#FF9800"
+STOP_RED = "#C0392B"
+STOP_RED_HOVER = "#A93226"
+STOP_OFF = ("gray70", "#4A4D50")
+
+FONT_MONO = "DejaVu Sans Mono"
+TOPIC_COLUMN_WIDTH = 260
+NO_TOPICS_PLACEHOLDER = "<no topics selected>"
 
 
 class RecordingState(Enum):
@@ -31,388 +46,401 @@ class RecordingState(Enum):
 
 
 class RecorderGUI:
-    """Modern minimalist GUI for MCAP recording."""
+    """CustomTkinter GUI for MCAP recording."""
 
-    def __init__(self, root: tk.Tk, config: RecorderConfig, ros_node=None):
+    def __init__(self, root: ctk.CTk, config: RecorderConfig, ros_node=None):
         """Initialize the RecorderGUI."""
         self.root = root
         self.config = config
         self.ros_node = ros_node
 
+        ctk.set_appearance_mode("dark")
+
         self.root.title("REC GUI - MCAP Recorder")
-        self.root.geometry("900x700")
-        self.root.configure(bg=BG_MAIN)
+        self.root.geometry(
+            f"{self.config.get('gui.window_width', 1100)}"
+            f"x{self.config.get('gui.window_height', 760)}"
+        )
+        self.root.minsize(860, 600)
 
         self.recording_state = RecordingState.IDLE
         self.current_recording_start_time: Optional[datetime] = None
         self.available_topics: Dict[str, Dict] = {}
         self.selected_topics: set = set()
-        self.messages_recorded = 0
+        self.topic_boxes: Dict[str, ctk.CTkCheckBox] = {}
+        self.topic_vars: Dict[str, tk.BooleanVar] = {}
+        self.topic_columns = 0
+        self.active_command: Optional[str] = None
+        self.last_output: Optional[Path] = None
 
-        # Modern fonts
-        self.font_title = tkfont.Font(family="Helvetica", size=14, weight="bold")
-        self.font_large = tkfont.Font(family="Helvetica", size=11, weight="bold")
-        self.font_normal = tkfont.Font(family="Helvetica", size=10)
-        self.font_small = tkfont.Font(family="Helvetica", size=9)
+        self.font_title = ctk.CTkFont(size=24, weight="bold")
+        self.font_large = ctk.CTkFont(size=15, weight="bold")
+        self.font_normal = ctk.CTkFont(size=14)
+        self.font_small = ctk.CTkFont(size=12)
+        self.font_duration = ctk.CTkFont(size=30, weight="bold")
+        self.font_mono = ctk.CTkFont(family=FONT_MONO, size=12)
+        self.font_topic = ctk.CTkFont(family=FONT_MONO, size=13)
 
         self._create_widgets()
         self._setup_callbacks()
+        self._on_profile_changed()
+        self._refresh_topics()
         self._start_gui_updates()
+
+    # ─ Widget helpers ──────────────────────────────────────────────────────────
+    def _filled_button(self, master, text: str, command, **kwargs) -> ctk.CTkButton:
+        """Create a filled accent button."""
+        return ctk.CTkButton(
+            master,
+            text=text,
+            font=self.font_normal,
+            fg_color=ACCENT_BLUE,
+            hover_color=ACCENT_BLUE_HOVER,
+            text_color=("white", "#DCE4EE"),
+            command=command,
+            **kwargs
+        )
+
+    def _outline_button(self, master, text: str, command, **kwargs) -> ctk.CTkButton:
+        """Create an outlined secondary button."""
+        return ctk.CTkButton(
+            master,
+            text=text,
+            font=self.font_normal,
+            fg_color="transparent",
+            hover_color=HOVER_OUTLINE,
+            border_width=2,
+            border_color=BORDER_COLOR,
+            text_color=TEXT_PRIMARY,
+            command=command,
+            **kwargs
+        )
 
     def _create_widgets(self):
         """Create all GUI widgets."""
-        # ─ Header ──────────────────────────────────────────────────────────────
-        header = tk.Frame(self.root, bg=BG_MAIN, height=70)
-        header.pack(fill="x", padx=20, pady=(20, 10))
+        self.root.grid_columnconfigure(1, weight=1)
+        self.root.grid_rowconfigure(0, weight=1)
 
-        tk.Label(
-            header,
+        self._create_sidebar()
+
+        content = ctk.CTkFrame(self.root, fg_color="transparent")
+        content.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+        content.grid_columnconfigure((0, 1), weight=1, uniform="cards")
+        content.grid_rowconfigure(1, weight=1)
+
+        self._create_status_card(content)
+        self._create_profile_card(content)
+        self._create_topics_card(content)
+        self._create_command_card(content)
+
+    def _create_sidebar(self):
+        """Create the sidebar with the recording controls."""
+        # ─ Sidebar ─────────────────────────────────────────────────────────────
+        sidebar = ctk.CTkFrame(self.root, width=220, corner_radius=0)
+        sidebar.grid(row=0, column=0, sticky="nsew")
+        sidebar.grid_propagate(False)
+        sidebar.grid_columnconfigure(0, weight=1)
+        sidebar.grid_rowconfigure(7, weight=1)
+
+        ctk.CTkLabel(
+            sidebar,
             text="REC GUI",
             font=self.font_title,
-            fg=TEXT_PRIMARY,
-            bg=BG_MAIN
-        ).pack(side="left")
+            anchor="w"
+        ).grid(row=0, column=0, sticky="ew", padx=20, pady=(24, 17))
 
-        self.status_indicator = tk.Label(
-            header,
-            text="● Ready",
+        self.btn_start = self._filled_button(
+            sidebar, "Start recording", self._on_start,
+            height=34,
+            text_color_disabled=("gray95", "#9AA7B2")
+        )
+        self.btn_start.grid(row=1, column=0, sticky="ew", padx=20, pady=7)
+
+        self.btn_stop = ctk.CTkButton(
+            sidebar,
+            text="Stop",
             font=self.font_normal,
-            fg=ACCENT_GREEN,
-            bg=BG_MAIN
-        )
-        self.status_indicator.pack(side="right")
-
-        # Separator
-        tk.Frame(self.root, bg=BORDER_COLOR, height=1).pack(fill="x")
-
-        # ─ Main Content ────────────────────────────────────────────────────────
-        content = tk.Frame(self.root, bg=BG_MAIN)
-        content.pack(fill="both", expand=True, padx=20, pady=20)
-
-        # ─ Controls Section ────────────────────────────────────────────────────
-        ctrl_section = tk.Frame(content, bg=BG_MAIN)
-        ctrl_section.pack(fill="x", pady=(0, 20))
-
-        tk.Label(
-            ctrl_section,
-            text="Recording Controls",
-            font=self.font_large,
-            fg=TEXT_PRIMARY,
-            bg=BG_MAIN
-        ).pack(anchor="w", pady=(0, 10))
-
-        # Control buttons frame
-        buttons_frame = tk.Frame(ctrl_section, bg=BG_MAIN)
-        buttons_frame.pack(fill="x")
-
-        # Start button (large, green)
-        self.btn_start = tk.Button(
-            buttons_frame,
-            text="▶ START RECORDING",
-            font=self.font_large,
-            bg=ACCENT_GREEN,
-            fg="white",
-            activebackground="#45a049",
-            padx=20,
-            pady=12,
-            border=0,
-            cursor="hand2",
-            command=self._on_start
-        )
-        self.btn_start.pack(side="left", padx=(0, 10))
-
-        # Stop button (large, red)
-        self.btn_stop = tk.Button(
-            buttons_frame,
-            text="⏹ STOP",
-            font=self.font_large,
-            bg=TEXT_SECONDARY,
-            fg="white",
-            activebackground="#757575",
-            padx=20,
-            pady=12,
-            border=0,
+            height=34,
+            fg_color=STOP_OFF,
+            hover_color=STOP_RED_HOVER,
+            text_color="white",
+            text_color_disabled=("gray45", "#8A8A8A"),
             state="disabled",
-            cursor="hand2",
             command=self._on_stop
         )
-        self.btn_stop.pack(side="left", padx=5)
+        self.btn_stop.grid(row=2, column=0, sticky="ew", padx=20, pady=7)
 
-        # Recording tools dropdown (rosbag info, mcap info, foxglove)
-        tools_var = tk.StringVar(value="Recording Tools")
-        tools_menu = tk.OptionMenu(
-            buttons_frame,
-            tools_var,
-            "rosbag info",
-            "mcap info",
-            "open in foxglove",
-            command=lambda x: self._on_tool_selected(x, tools_var)
-        )
-        tools_menu.config(
+        # Recording tools (rosbag info, mcap info, foxglove)
+        ctk.CTkLabel(
+            sidebar,
+            text="Last recording",
+            font=self.font_small,
+            text_color=TEXT_SECONDARY,
+            anchor="w"
+        ).grid(row=3, column=0, sticky="ew", padx=20, pady=(15, 0))
+
+        for row, tool in enumerate(("Rosbag info", "MCAP info", "Open in Foxglove"), 4):
+            self._outline_button(
+                sidebar, tool, lambda t=tool: self._on_tool_selected(t),
+                height=34
+            ).grid(row=row, column=0, sticky="ew", padx=20, pady=7)
+
+        ctk.CTkLabel(
+            sidebar, text="Appearance mode:", font=self.font_normal
+        ).grid(row=8, column=0, sticky="ew", padx=20, pady=(7, 0))
+        self.appearance_menu = ctk.CTkOptionMenu(
+            sidebar,
+            values=["Dark", "Light", "System"],
             font=self.font_normal,
-            bg=BG_SECTION,
-            fg=TEXT_SECONDARY,
-            padx=10,
-            pady=6,
-            activebackground=BORDER_COLOR,
-            activeforeground=TEXT_PRIMARY,
-            highlightthickness=0,
-            relief="solid",
-            borderwidth=1
+            height=32,
+            command=self._on_appearance_changed
         )
-        tools_menu["menu"].config(bg=BG_SECTION, fg=TEXT_PRIMARY, activebackground=BORDER_COLOR)
-        tools_menu.pack(side="right", padx=(10, 0))
+        self.appearance_menu.grid(row=9, column=0, sticky="ew", padx=20, pady=7)
 
-        # Settings button
-        self.btn_settings = tk.Button(
-            buttons_frame,
-            text="⚙",
-            font=self.font_large,
-            bg=BG_SECTION,
-            fg=TEXT_SECONDARY,
-            activebackground=BORDER_COLOR,
-            padx=12,
-            pady=10,
-            border=1,
-            borderwidth=1,
-            relief="solid",
-            cursor="hand2",
-            command=self._open_settings
+        ctk.CTkLabel(
+            sidebar, text="UI scaling:", font=self.font_normal
+        ).grid(row=10, column=0, sticky="ew", padx=20, pady=(7, 0))
+        self.scaling_menu = ctk.CTkOptionMenu(
+            sidebar,
+            values=["80%", "90%", "100%", "110%", "120%"],
+            font=self.font_normal,
+            height=32,
+            command=self._on_scaling_changed
         )
-        self.btn_settings.pack(side="right", padx=(0, 5))
+        self.scaling_menu.set("100%")
+        self.scaling_menu.grid(row=11, column=0, sticky="ew", padx=20, pady=(7, 24))
 
-        # ─ Info Section ────────────────────────────────────────────────────────
-        info_section = tk.Frame(content, bg=BG_SECTION, relief="solid", borderwidth=1)
-        info_section.pack(fill="x", pady=(0, 20))
+    def _create_status_card(self, content):
+        """Create the recording status card."""
+        # ─ Recording Status ────────────────────────────────────────────────────
+        card = ctk.CTkFrame(content, corner_radius=8)
+        card.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        card.grid_columnconfigure(1, weight=1)
 
-        info_inner = tk.Frame(info_section, bg=BG_SECTION)
-        info_inner.pack(fill="x", padx=15, pady=12)
+        ctk.CTkLabel(
+            card, text="Recording status", font=self.font_large
+        ).grid(row=0, column=0, sticky="w", padx=20, pady=(16, 0))
 
-        # Duration and messages in one line
-        tk.Label(
-            info_inner,
-            text="Duration:",
+        self.status_indicator = ctk.CTkLabel(
+            card,
+            text="● Ready",
+            font=ctk.CTkFont(size=13),
+            text_color=ACCENT_GREEN
+        )
+        self.status_indicator.grid(row=0, column=1, sticky="e", padx=20, pady=(16, 0))
+
+        duration_box = ctk.CTkFrame(card, fg_color=BG_INSET, corner_radius=6)
+        duration_box.grid(row=1, column=0, sticky="nsew", padx=(20, 6), pady=14)
+
+        ctk.CTkLabel(
+            duration_box,
+            text="Duration",
             font=self.font_small,
-            fg=TEXT_SECONDARY,
-            bg=BG_SECTION
-        ).grid(row=0, column=0, sticky="w", padx=(0, 10))
+            text_color=TEXT_SECONDARY,
+            height=16,
+            anchor="w"
+        ).pack(fill="x", padx=14, pady=(10, 0))
 
-        self.lbl_duration = tk.Label(
-            info_inner,
-            text="00:00:00",
-            font=self.font_large,
-            fg=ACCENT_BLUE,
-            bg=BG_SECTION
+        self.lbl_duration = ctk.CTkLabel(
+            duration_box,
+            text="0:00:00",
+            font=self.font_duration,
+            anchor="w"
         )
-        self.lbl_duration.grid(row=0, column=1, sticky="w", padx=(0, 30))
+        self.lbl_duration.pack(fill="x", padx=14, pady=(0, 8))
 
-        tk.Label(
-            info_inner,
-            text="Messages:",
-            font=self.font_small,
-            fg=TEXT_SECONDARY,
-            bg=BG_SECTION
-        ).grid(row=0, column=2, sticky="w", padx=(0, 10))
+        # MCAP writer options of the selected profile
+        options_box = ctk.CTkFrame(card, fg_color=BG_INSET, corner_radius=6)
+        options_box.grid(row=1, column=1, sticky="nsew", padx=(6, 20), pady=14)
+        options_box.grid_rowconfigure((0, 4), weight=1)
+        options_box.grid_columnconfigure(1, weight=1)
 
-        self.lbl_messages = tk.Label(
-            info_inner,
-            text="0",
-            font=self.font_large,
-            fg=ACCENT_GREEN,
-            bg=BG_SECTION
+        self.lbl_mcap_options: Dict[str, ctk.CTkLabel] = {}
+        for row, key in enumerate(("chunkSize", "compression", "compressionLevel"), 1):
+            ctk.CTkLabel(
+                options_box,
+                text=key,
+                font=self.font_mono,
+                text_color=TEXT_SECONDARY,
+                height=18,
+                anchor="w"
+            ).grid(row=row, column=0, sticky="w", padx=(14, 12))
+            value = ctk.CTkLabel(
+                options_box, text="", font=self.font_mono, height=18, anchor="w"
+            )
+            value.grid(row=row, column=1, sticky="w", padx=(0, 14))
+            self.lbl_mcap_options[key] = value
+
+        # Activity bar, only shown while recording
+        self.progress = ctk.CTkProgressBar(card, height=8, mode="indeterminate")
+        self.progress.grid(row=2, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 16))
+        self.progress.grid_remove()
+
+    def _create_profile_card(self, content):
+        """Create the recording profile and output folder card."""
+        # ─ Recording Profile ───────────────────────────────────────────────────
+        card = ctk.CTkFrame(content, corner_radius=8)
+        card.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+        card.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            card, text="Recording profile", font=self.font_large, anchor="w"
+        ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=20, pady=(16, 6))
+
+        profiles = list((self.config.get_nested("recording", "profiles") or {}).keys())
+        default_profile = self.config.get_nested("recording", "default_profile")
+        if default_profile not in profiles:
+            profiles.insert(0, default_profile)
+        self.profile_var = tk.StringVar(value=default_profile)
+
+        self.profile_menu = ctk.CTkOptionMenu(
+            card,
+            values=profiles,
+            variable=self.profile_var,
+            font=self.font_normal,
+            height=32,
+            dynamic_resizing=False,
+            command=self._on_profile_changed
         )
-        self.lbl_messages.grid(row=0, column=3, sticky="w")
+        self.profile_menu.grid(row=1, column=0, sticky="ew", padx=(20, 8), pady=6)
+
+        self.btn_save_profile = self._outline_button(
+            card, "Save profile", self._save_profile,
+            width=110,
+            height=32
+        )
+        self.btn_save_profile.grid(row=1, column=1, padx=(0, 20), pady=6)
 
         # Output directory (editable)
-        output_row = tk.Frame(info_inner, bg=BG_SECTION)
-        output_row.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        ctk.CTkLabel(
+            card,
+            text="Output folder",
+            font=ctk.CTkFont(size=13),
+            text_color=TEXT_SECONDARY,
+            anchor="w"
+        ).grid(row=2, column=0, columnspan=2, sticky="ew", padx=20, pady=(6, 0))
 
-        tk.Label(
-            output_row,
-            text="Output:",
-            font=self.font_small,
-            fg=TEXT_SECONDARY,
-            bg=BG_SECTION
-        ).pack(side="left", padx=(0, 10))
-
-        self.lbl_output = tk.Label(
-            output_row,
-            text=str(self.config.get_output_directory()),
-            font=self.font_small,
-            fg=TEXT_PRIMARY,
-            bg=BG_SECTION
+        self.output_var = tk.StringVar(value=str(self.config.get_output_directory()))
+        self.entry_output = ctk.CTkEntry(
+            card,
+            textvariable=self.output_var,
+            font=ctk.CTkFont(size=13),
+            height=30
         )
-        self.lbl_output.pack(side="left", padx=(0, 10))
+        self.entry_output.grid(row=3, column=0, sticky="ew", padx=(20, 8), pady=(4, 16))
 
-        tk.Button(
-            output_row,
-            text="✏ Edit",
-            font=self.font_small,
-            bg=BG_SECTION,
-            fg=TEXT_SECONDARY,
-            activebackground=BORDER_COLOR,
-            padx=8,
-            pady=2,
-            border=0,
-            relief="solid",
-            borderwidth=1,
-            cursor="hand2",
-            command=self._edit_output_directory
-        ).pack(side="left", padx=(0, 5))
-
-        # ─ Profile and Search Section ──────────────────────────────────────────
-        profile_section = tk.Frame(content, bg=BG_MAIN)
-        profile_section.pack(fill="x", pady=(0, 10))
-
-        tk.Label(
-            profile_section,
-            text="Recording Profile",
-            font=self.font_large,
-            fg=TEXT_PRIMARY,
-            bg=BG_MAIN
-        ).pack(anchor="w", pady=(0, 8))
-
-        profiles = list(self.config.get_nested("recording", "profiles").keys())
-        self.profile_var = tk.StringVar(
-            value=self.config.get_nested("recording", "default_profile")
+        self.btn_browse = self._filled_button(
+            card, "Browse", self._edit_output_directory,
+            width=110,
+            height=30
         )
-        # Track profile changes to auto-select topics
-        self.profile_var.trace("w", self._on_profile_changed)
+        self.btn_browse.grid(row=3, column=1, padx=(0, 20), pady=(4, 16))
 
-        profile_menu = tk.OptionMenu(profile_section, self.profile_var, *profiles)
-        profile_menu.config(
-            font=self.font_normal,
-            bg=BG_SECTION,
-            fg=TEXT_PRIMARY,
-            padx=10,
-            pady=6,
-            activebackground=BORDER_COLOR,
-            activeforeground=TEXT_PRIMARY,
-            highlightthickness=0,
-            relief="solid",
-            borderwidth=1
-        )
-        profile_menu["menu"].config(bg=BG_SECTION, fg=TEXT_PRIMARY, activebackground=BORDER_COLOR)
-        profile_menu.pack(anchor="w", fill="x")
-
+    def _create_topics_card(self, content):
+        """Create the topic selection card."""
         # ─ Search and Topic List ───────────────────────────────────────────────
-        topics_section = tk.Frame(content, bg=BG_MAIN)
-        topics_section.pack(fill="both", expand=True)
+        card = ctk.CTkFrame(content, corner_radius=8)
+        card.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=10, pady=10)
+        card.grid_columnconfigure(0, weight=1)
+        card.grid_rowconfigure(2, weight=1)
 
-        tk.Label(
-            topics_section,
-            text="Topics to Record",
-            font=self.font_large,
-            fg=TEXT_PRIMARY,
-            bg=BG_MAIN
-        ).pack(anchor="w", pady=(0, 8))
+        ctk.CTkLabel(
+            card, text="Topics to record", font=self.font_large, anchor="w"
+        ).grid(row=0, column=0, sticky="w", padx=20, pady=(16, 6))
+
+        self.lbl_selected = ctk.CTkLabel(
+            card,
+            text="0 / 0 selected",
+            font=ctk.CTkFont(size=13),
+            text_color=TEXT_SECONDARY
+        )
+        self.lbl_selected.grid(row=0, column=1, sticky="e", padx=20, pady=(16, 6))
 
         # Search box
-        search_frame = tk.Frame(topics_section, bg=BG_MAIN)
-        search_frame.pack(fill="x", pady=(0, 10))
-
-        tk.Label(
-            search_frame,
-            text="🔍",
+        self.search_entry = ctk.CTkEntry(
+            card,
+            placeholder_text="Filter topics…",
             font=self.font_normal,
-            fg=TEXT_SECONDARY,
-            bg=BG_MAIN
-        ).pack(side="left", padx=(0, 5))
-
-        self.search_var = tk.StringVar()
-        self.search_var.trace("w", self._on_search)
-        search_entry = tk.Entry(
-            search_frame,
-            textvariable=self.search_var,
-            font=self.font_normal,
-            fg=TEXT_PRIMARY,
-            bg="white",
-            insertbackground=TEXT_PRIMARY,
-            relief="solid",
-            borderwidth=1
+            height=32
         )
-        search_entry.pack(fill="x", padx=(0, 5))
+        self.search_entry.grid(row=1, column=0, columnspan=2, sticky="ew", padx=20, pady=6)
 
-        # Topic listbox with scrollbar
-        list_frame = tk.Frame(topics_section, bg=BG_MAIN)
-        list_frame.pack(fill="both", expand=True)
-
-        scrollbar = tk.Scrollbar(list_frame)
-        scrollbar.pack(side="right", fill="y")
-
-        self.topics_list = tk.Listbox(
-            list_frame,
-            bg="white",
-            fg=TEXT_PRIMARY,
-            selectmode="multiple",
-            yscrollcommand=scrollbar.set,
-            font=self.font_normal,
-            border=1,
-            relief="solid",
-            highlightthickness=0,
-            activestyle="none"
+        # Topic checkboxes in a scrollable grid
+        self.topics_frame = ctk.CTkScrollableFrame(
+            card, fg_color=BG_INSET, corner_radius=6, height=120
         )
-        self.topics_list.pack(side="left", fill="both", expand=True)
-        scrollbar.config(command=self.topics_list.yview)
+        self.topics_frame.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=20, pady=6)
+
+        self.lbl_no_topics = ctk.CTkLabel(
+            self.topics_frame,
+            text="No topics found. Start your nodes, then press Refresh.",
+            font=ctk.CTkFont(size=13),
+            text_color=TEXT_SECONDARY
+        )
 
         # Buttons below list
-        btn_frame = tk.Frame(topics_section, bg=BG_MAIN)
-        btn_frame.pack(fill="x", pady=(10, 0))
+        btn_frame = ctk.CTkFrame(card, fg_color="transparent")
+        btn_frame.grid(row=3, column=0, columnspan=2, sticky="ew", padx=20, pady=(6, 16))
 
-        tk.Button(
-            btn_frame,
-            text="Select All",
+        self._filled_button(
+            btn_frame, "Select all", self._select_all, width=90, height=30
+        ).pack(side="left", padx=(0, 10))
+        self._filled_button(
+            btn_frame, "Select inverse", self._select_inverse, width=120, height=30
+        ).pack(side="left", padx=(0, 10))
+        self._outline_button(
+            btn_frame, "Clear", self._clear_selection, width=70, height=30
+        ).pack(side="left", padx=(0, 10))
+        self._outline_button(
+            btn_frame, "Refresh", self._refresh_topics, width=80, height=30
+        ).pack(side="left")
+
+    def _create_command_card(self, content):
+        """Create the bottom card showing the record command."""
+        # ─ Record Command ──────────────────────────────────────────────────────
+        card = ctk.CTkFrame(content, corner_radius=8)
+        card.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=10, pady=10)
+        card.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            card, text="Record command", font=self.font_large, anchor="w"
+        ).grid(row=0, column=0, sticky="w", padx=(20, 12), pady=(12, 4))
+
+        self.lbl_command_hint = ctk.CTkLabel(
+            card,
+            text="",
             font=self.font_small,
-            bg=BG_SECTION,
-            fg=TEXT_PRIMARY,
-            activebackground=BORDER_COLOR,
-            padx=10,
-            pady=5,
-            border=1,
-            borderwidth=1,
-            relief="solid",
-            cursor="hand2",
-            command=self._select_all
-        ).pack(side="left", padx=(0, 5))
+            text_color=TEXT_SECONDARY,
+            anchor="w"
+        )
+        self.lbl_command_hint.grid(row=0, column=1, sticky="ew", pady=(12, 4))
 
-        tk.Button(
-            btn_frame,
-            text="Clear",
-            font=self.font_small,
-            bg=BG_SECTION,
-            fg=TEXT_PRIMARY,
-            activebackground=BORDER_COLOR,
-            padx=10,
-            pady=5,
-            border=1,
-            borderwidth=1,
-            relief="solid",
-            cursor="hand2",
-            command=self._clear_selection
-        ).pack(side="left", padx=5)
+        self.btn_copy = self._outline_button(
+            card, "Copy", self._copy_command, width=70, height=26
+        )
+        self.btn_copy.grid(row=0, column=2, padx=20, pady=(12, 4))
 
-        tk.Button(
-            btn_frame,
-            text="Refresh",
-            font=self.font_small,
-            bg=BG_SECTION,
-            fg=TEXT_PRIMARY,
-            activebackground=BORDER_COLOR,
-            padx=10,
-            pady=5,
-            border=1,
-            borderwidth=1,
-            relief="solid",
-            cursor="hand2",
-            command=self._refresh_topics
-        ).pack(side="left", padx=5)
-
-        # Initial refresh
-        self._refresh_topics()
+        self.txt_command = ctk.CTkTextbox(
+            card,
+            font=self.font_mono,
+            fg_color=BG_INSET,
+            corner_radius=6,
+            height=74,
+            wrap="word",
+            state="disabled"
+        )
+        self.txt_command.grid(row=1, column=0, columnspan=3, sticky="ew", padx=20, pady=(4, 16))
 
     def _setup_callbacks(self):
         """Setup event callbacks."""
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.search_entry.bind("<KeyRelease>", self._on_search)
+        self.entry_output.bind("<Return>", self._on_output_edited)
+        self.entry_output.bind("<FocusOut>", self._on_output_edited)
+        self.topics_frame.bind("<Configure>", self._on_topics_resized)
+        # CTkScrollableFrame only handles <MouseWheel>, X11 sends Button-4/5
+        self.root.bind_all("<Button-4>", lambda e: self._on_mouse_wheel(e, -1), add="+")
+        self.root.bind_all("<Button-5>", lambda e: self._on_mouse_wheel(e, 1), add="+")
 
     def _start_gui_updates(self):
         """Start periodic GUI updates."""
@@ -427,80 +455,240 @@ class RecorderGUI:
             elapsed = datetime.now() - self.current_recording_start_time
             hours, remainder = divmod(int(elapsed.total_seconds()), 3600)
             minutes, seconds = divmod(remainder, 60)
-            self.lbl_duration.config(text=f"{hours:02d}:{minutes:02d}:{seconds:02d}")
-            self.lbl_messages.config(text=str(self.messages_recorded))
+            self.lbl_duration.configure(text=f"{hours}:{minutes:02d}:{seconds:02d}")
+            self._check_recording_alive()
+        else:
+            # Keep the timestamp of the previewed command current
+            self._update_command()
 
         self.root.after(500, self._update_display)
 
+    def _check_recording_alive(self):
+        """Switch to the error state if ros2 bag record exited on its own."""
+        if not (self.ros_node and hasattr(self.ros_node, "recording_exit_code")):
+            return
+
+        exit_code = self.ros_node.recording_exit_code()
+        if exit_code is None:
+            return
+
+        self.ros_node.recording = False
+        self.current_recording_start_time = None
+        self._set_state(RecordingState.ERROR)
+        messagebox.showerror(
+            "Recording stopped",
+            f"ros2 bag record exited with code {exit_code}.\n\n"
+            f"{self.ros_node.recording_log_tail()}"
+        )
+
+    # ─ Topics ──────────────────────────────────────────────────────────────────
+    def _visible_topics(self) -> List[str]:
+        """Get the topics matching the search, in display order."""
+        search_term = self.search_entry.get().lower()
+        return [t for t in sorted(self.topic_boxes) if search_term in t.lower()]
+
     def _on_search(self, *args):
         """Filter topics based on search."""
-        search_term = self.search_var.get().lower()
-        self.topics_list.delete(0, "end")
+        visible = self._visible_topics()
+        columns = max(1, self.topic_columns)
 
-        for topic in sorted(self.available_topics.keys()):
-            if search_term in topic.lower():
-                self.topics_list.insert("end", topic)
+        for box in self.topic_boxes.values():
+            box.grid_forget()
+        for i, topic in enumerate(visible):
+            self.topic_boxes[topic].grid(
+                row=i // columns, column=i % columns, sticky="w", padx=10, pady=6
+            )
+
+        if visible:
+            self.lbl_no_topics.grid_forget()
+        else:
+            self.lbl_no_topics.grid(row=0, column=0, columnspan=columns, padx=10, pady=20)
+
+    def _on_topics_resized(self, event=None):
+        """Fit as many topic columns as the list is wide."""
+        # A column has to hold the longest topic name next to its checkbox
+        longest = max(self.topic_boxes, key=len, default="")
+        column_width = max(TOPIC_COLUMN_WIDTH, self.font_topic.measure(longest) + 60)
+        scaling = ctk.ScalingTracker.get_widget_scaling(self.topics_frame)
+        columns = max(1, int(self.topics_frame.winfo_width() / (column_width * scaling)))
+        if columns == self.topic_columns:
+            return
+
+        for column in range(max(columns, self.topic_columns)):
+            self.topics_frame.grid_columnconfigure(
+                column, weight=1 if column < columns else 0,
+                uniform="topics" if column < columns else ""
+            )
+        self.topic_columns = columns
+        self._on_search()
+
+    def _on_mouse_wheel(self, event, direction: int):
+        """Scroll the topic list with the mouse wheel on X11."""
+        widget = self.root.winfo_containing(event.x_root, event.y_root)
+        if widget and str(widget).startswith(str(self.topics_frame._parent_frame)):
+            self.topics_frame._parent_canvas.yview_scroll(direction, "units")
+
+    def _rebuild_topics(self):
+        """Sync the checkboxes with the available and selected topics."""
+        # Selected topics stay listed even while nobody publishes them
+        topics = set(self.available_topics) | self.selected_topics
+        locked = self.recording_state == RecordingState.RECORDING
+
+        for topic in set(self.topic_boxes) - topics:
+            self.topic_boxes.pop(topic).destroy()
+            del self.topic_vars[topic]
+
+        for topic in sorted(topics - set(self.topic_boxes)):
+            var = tk.BooleanVar(value=topic in self.selected_topics)
+            self.topic_vars[topic] = var
+            self.topic_boxes[topic] = ctk.CTkCheckBox(
+                self.topics_frame,
+                text=topic,
+                variable=var,
+                font=self.font_topic,
+                checkbox_width=20,
+                checkbox_height=20,
+                border_width=2,
+                corner_radius=5,
+                state="disabled" if locked else "normal",
+                command=lambda t=topic: self._on_topic_toggled(t)
+            )
+
+        for topic, box in self.topic_boxes.items():
+            self.topic_vars[topic].set(topic in self.selected_topics)
+            box.configure(
+                text_color=TEXT_PRIMARY if topic in self.available_topics else TEXT_SECONDARY
+            )
+
+        self._on_topics_resized()
+        self._on_search()
+        self._on_selection_changed()
+
+    def _on_topic_toggled(self, topic: str):
+        """Track a topic checkbox being toggled."""
+        if self.topic_vars[topic].get():
+            self.selected_topics.add(topic)
+        else:
+            self.selected_topics.discard(topic)
+        self._on_selection_changed()
+
+    def _set_visible_topics(self, selected):
+        """Select or deselect the visible topics, selected(topic) decides."""
+        if self.recording_state == RecordingState.RECORDING:
+            return
+
+        for topic in self._visible_topics():
+            if selected(topic):
+                self.selected_topics.add(topic)
+            else:
+                self.selected_topics.discard(topic)
+            self.topic_vars[topic].set(topic in self.selected_topics)
+        self._on_selection_changed()
+
+    def _on_selection_changed(self):
+        """Update everything that depends on the selected topics."""
+        self.lbl_selected.configure(
+            text=f"{len(self.selected_topics)} / {len(self.topic_boxes)} selected"
+        )
+        self._update_start_button()
+        self._update_command()
 
     def _on_profile_changed(self, *args):
         """Auto-select topics and update settings when profile changes."""
         profile_name = self.profile_var.get()
-        profiles = self.config.get_nested("recording", "profiles")
+        profile_data = self.config.get_profile(profile_name)
 
-        if profile_name in profiles:
-            profile_data = profiles[profile_name]
-            profile_topics = profile_data.get("topics", [])
+        # Update output directory if profile specifies one
+        if "output_directory" in profile_data:
+            output_dir = profile_data["output_directory"]
+            self.config.set("output.directory", output_dir)
+            self.output_var.set(output_dir)
 
-            # Update output directory if profile specifies one
-            if "output_directory" in profile_data:
-                output_dir = profile_data["output_directory"]
-                self.config.set("output.directory", output_dir)
-                self.lbl_output.config(text=output_dir)
+        for key, label in self.lbl_mcap_options.items():
+            value = self.config.get_mcap_options(profile_name).get(key, "")
+            label.configure(text=f'"{value}"' if isinstance(value, str) else str(value))
 
-            # Clear current selection
-            self.topics_list.selection_clear(0, "end")
-
-            # Auto-select topics from the profile
-            if profile_topics:
-                for i in range(self.topics_list.size()):
-                    topic = self.topics_list.get(i)
-                    if topic in profile_topics:
-                        self.topics_list.selection_set(i)
+        # Auto-select topics from the profile
+        self.selected_topics = set(profile_data.get("topics") or [])
+        self._rebuild_topics()
 
     def _select_all(self):
         """Select all visible topics."""
-        self.topics_list.selection_set(0, "end")
+        self._set_visible_topics(lambda topic: True)
+
+    def _select_inverse(self):
+        """Invert the selection of the visible topics."""
+        self._set_visible_topics(lambda topic: topic not in self.selected_topics)
 
     def _clear_selection(self):
         """Clear all selections."""
-        self.topics_list.selection_clear(0, "end")
+        self._set_visible_topics(lambda topic: False)
 
     def _refresh_topics(self):
         """Refresh available topics."""
+        if self.search_entry.get():
+            self.search_entry.delete(0, "end")
         if self.ros_node and hasattr(self.ros_node, "get_available_topics"):
             try:
                 topics = self.ros_node.get_available_topics()
                 self.available_topics = {t: {"name": t} for t in topics}
-                self._on_search()
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to refresh topics: {e}")
+        self._rebuild_topics()
 
+    # ─ Record command ──────────────────────────────────────────────────────────
+    def _update_command(self):
+        """Show the ros2 bag record command at the bottom."""
+        if self.recording_state == RecordingState.RECORDING and self.active_command:
+            command = self.active_command
+            hint = "running now"
+        else:
+            command = shlex.join(
+                self.config.build_record_command(
+                    [], self.profile_var.get(), self.output_var.get().strip() or None
+                )
+            )
+            topics = sorted(self.selected_topics)
+            command += " " + (shlex.join(topics) if topics else NO_TOPICS_PLACEHOLDER)
+            hint = "what Start recording will run"
+
+        self.lbl_command_hint.configure(text=hint)
+        if command == self.txt_command.get("1.0", "end-1c"):
+            return
+
+        self.txt_command.configure(state="normal")
+        self.txt_command.delete("1.0", "end")
+        self.txt_command.insert("1.0", command)
+        self.txt_command.configure(state="disabled")
+
+    def _copy_command(self):
+        """Copy the record command to the clipboard."""
+        self.root.clipboard_clear()
+        self.root.clipboard_append(self.txt_command.get("1.0", "end-1c"))
+        self.btn_copy.configure(text="Copied")
+        self.root.after(1500, lambda: self.btn_copy.configure(text="Copy"))
+
+    # ─ Recording ───────────────────────────────────────────────────────────────
     def _on_start(self):
         """Start recording."""
-        selected = self.topics_list.curselection()
-        if not selected:
+        topics = sorted(self.selected_topics)
+        if not topics:
             messagebox.showwarning("No Topics", "Please select at least one topic.")
             return
 
-        topics = [self.topics_list.get(i) for i in selected]
+        self._on_output_edited()
         self._set_state(RecordingState.STARTING)
 
         if self.ros_node and hasattr(self.ros_node, "start_recording"):
             try:
-                self.ros_node.start_recording(topics, self.profile_var.get())
-                self._set_state(RecordingState.RECORDING)
+                command = self.ros_node.start_recording(
+                    topics, self.profile_var.get(), self.output_var.get().strip() or None
+                )
+                self.active_command = shlex.join(command)
+                self.last_output = Path(command[command.index("-o") + 1])
                 self.current_recording_start_time = datetime.now()
-                self.messages_recorded = 0
-                self.lbl_duration.config(text="00:00:00")
+                self.lbl_duration.configure(text="0:00:00")
+                self._set_state(RecordingState.RECORDING)
             except Exception as e:
                 self._set_state(RecordingState.ERROR)
                 messagebox.showerror("Error", f"Failed to start: {e}")
@@ -508,58 +696,114 @@ class RecorderGUI:
     def _on_stop(self):
         """Stop recording."""
         self._set_state(RecordingState.STOPPING)
+        self.root.update_idletasks()
         if self.ros_node and hasattr(self.ros_node, "stop_recording"):
             try:
                 self.ros_node.stop_recording()
                 self._set_state(RecordingState.IDLE)
                 self.current_recording_start_time = None
-                self.lbl_duration.config(text="00:00:00")
-                self.messages_recorded = 0
             except Exception as e:
                 self._set_state(RecordingState.ERROR)
                 messagebox.showerror("Error", f"Failed to stop: {e}")
 
+    # ─ Last recording tools ────────────────────────────────────────────────────
     def _get_last_recording(self) -> Optional[Path]:
-        """Find the most recently modified .mcap or .bag file."""
+        """Find the most recent recording (a rosbag2 folder or a .mcap file)."""
+        if self.last_output and self.last_output.exists():
+            return self.last_output
+
         output_dir = Path(self.config.get_output_directory())
         if not output_dir.exists():
             return None
 
-        recordings = list(output_dir.glob("*.mcap")) + list(output_dir.glob("*.bag"))
+        recordings = [p.parent for p in output_dir.glob("*/metadata.yaml")]
+        recordings += list(output_dir.glob("*.mcap"))
         if not recordings:
             return None
 
         return max(recordings, key=lambda p: p.stat().st_mtime)
 
-    def _on_tool_selected(self, tool: str, tools_var: tk.StringVar):
-        """Handle recording tools selection."""
-        tools_var.set("Recording Tools")  # Reset dropdown
+    @staticmethod
+    def _get_mcap_file(recording: Path) -> Optional[Path]:
+        """Get the newest .mcap file of a recording."""
+        if recording.is_file():
+            return recording
+        files = sorted(recording.glob("*.mcap"), key=lambda p: p.stat().st_mtime)
+        return files[-1] if files else None
 
+    def _on_tool_selected(self, tool: str):
+        """Handle recording tools selection."""
         last_rec = self._get_last_recording()
         if not last_rec:
             messagebox.showwarning("No Recording", "No recording files found.")
             return
 
+        mcap_file = self._get_mcap_file(last_rec)
         try:
-            if tool == "rosbag info":
-                os.system(f"rosbag2 info '{last_rec}' &")
-            elif tool == "mcap info":
-                os.system(f"mcap info '{last_rec}' &")
-            elif tool == "open in foxglove":
-                os.system(f"foxglove '{last_rec}' &")
+            if tool == "Rosbag info":
+                self._show_command_output(["ros2", "bag", "info", str(last_rec)])
+            elif not mcap_file:
+                messagebox.showwarning("No Recording", f"No .mcap file in {last_rec}")
+            elif tool == "MCAP info":
+                self._show_command_output(["mcap", "info", str(mcap_file)])
+            elif tool == "Open in Foxglove":
+                foxglove = shutil.which("foxglove-studio") or shutil.which("foxglove")
+                if not foxglove:
+                    messagebox.showwarning("Not Found", "Foxglove is not installed.")
+                    return
+                subprocess.Popen([foxglove, str(mcap_file)])
         except Exception as e:
             messagebox.showerror("Error", f"Failed to run tool: {e}")
 
-    def _open_last_recording(self):
-        """Open the last recording directory."""
-        output_dir = self.config.get_output_directory()
-        try:
-            if output_dir.exists():
-                os.startfile(output_dir) if os.name == 'nt' else os.system(f'open "{output_dir}"')
-            else:
-                messagebox.showwarning("Not Found", f"Directory not found: {output_dir}")
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to open directory: {e}")
+    def _show_command_output(self, command: List[str]):
+        """Run a command and show what it printed in a window."""
+        result = subprocess.run(command, capture_output=True, text=True, timeout=60)
+
+        window = ctk.CTkToplevel(self.root)
+        window.title(shlex.join(command[:3]))
+        window.geometry("760x520")
+        window.transient(self.root)
+
+        text = ctk.CTkTextbox(window, font=self.font_mono, wrap="none")
+        text.pack(fill="both", expand=True, padx=12, pady=12)
+        text.insert("1.0", f"$ {shlex.join(command)}\n\n{result.stdout}{result.stderr}")
+        text.configure(state="disabled")
+
+    # ─ Profile and output ──────────────────────────────────────────────────────
+    def _save_profile(self):
+        """Save the selected topics and output folder as a profile."""
+        current = self.profile_var.get()
+        name = ctk.CTkInputDialog(
+            title="Save profile",
+            text=f"Profile name (leave empty to overwrite '{current}'):"
+        ).get_input()
+        if name is None:
+            return
+        name = name.strip() or current
+
+        self._on_output_edited()
+        profile_data = dict(self.config.get_profile(name) or self.config.get_profile(current))
+        profile_data["topics"] = sorted(self.selected_topics)
+        profile_data["output_directory"] = self.output_var.get().strip()
+        self.config.set(f"recording.profiles.{name}", profile_data)
+
+        # The packaged YAML stays untouched, the user config is searched first
+        save_path = Path.home() / ".rec_gui" / "rec_gui.yaml"
+        self.config.save(save_path)
+
+        self.profile_menu.configure(
+            values=list(self.config.get_nested("recording", "profiles").keys())
+        )
+        self.profile_var.set(name)
+        self._on_profile_changed()
+        messagebox.showinfo("Profile saved", f"Profile '{name}' saved to:\n{save_path}")
+
+    def _on_output_edited(self, event=None):
+        """Apply the output folder typed into the entry."""
+        output_dir = self.output_var.get().strip()
+        if output_dir:
+            self.config.set("output.directory", output_dir)
+        self._update_command()
 
     def _edit_output_directory(self):
         """Edit the output directory."""
@@ -573,17 +817,19 @@ class RecorderGUI:
             try:
                 # Create directory if it doesn't exist
                 os.makedirs(new_dir, exist_ok=True)
-                # Update config
-                self.config.set("output.directory", new_dir)
-                # Update label
-                self.lbl_output.config(text=new_dir)
-                # messagebox.showinfo("Success", f"Output directory changed to:\n{new_dir}")
+                self.output_var.set(new_dir)
+                self._on_output_edited()
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to set output directory: {e}")
 
-    def _open_settings(self):
-        """Open settings dialog."""
-        messagebox.showinfo("Settings", "Advanced settings will be implemented in the next version.")
+    # ─ Appearance ──────────────────────────────────────────────────────────────
+    def _on_appearance_changed(self, mode: str):
+        """Switch between dark, light and system appearance."""
+        ctk.set_appearance_mode(mode.lower())
+
+    def _on_scaling_changed(self, scaling: str):
+        """Scale the whole UI."""
+        ctk.set_widget_scaling(int(scaling.rstrip("%")) / 100)
 
     def _on_close(self):
         """Handle window close."""
@@ -593,15 +839,26 @@ class RecorderGUI:
             self._on_stop()
         self.root.destroy()
 
+    def _update_start_button(self):
+        """Enable Start only when idle and at least one topic is selected."""
+        busy = self.recording_state in (
+            RecordingState.STARTING, RecordingState.RECORDING, RecordingState.STOPPING
+        )
+        enabled = not busy and bool(self.selected_topics)
+        self.btn_start.configure(
+            state="normal" if enabled else "disabled",
+            fg_color=ACCENT_BLUE if enabled else ACCENT_BLUE_OFF
+        )
+
     def _set_state(self, state: RecordingState):
         """Set recording state and update UI."""
         self.recording_state = state
 
         state_colors = {
             RecordingState.IDLE: ACCENT_GREEN,
-            RecordingState.STARTING: "#FF9800",
+            RecordingState.STARTING: ACCENT_ORANGE,
             RecordingState.RECORDING: ACCENT_RED,
-            RecordingState.STOPPING: "#FF9800",
+            RecordingState.STOPPING: ACCENT_ORANGE,
             RecordingState.ERROR: ACCENT_RED,
         }
 
@@ -613,17 +870,31 @@ class RecorderGUI:
             RecordingState.ERROR: "● Error",
         }
 
-        self.status_indicator.config(
+        self.status_indicator.configure(
             text=state_text.get(state, "● Unknown"),
-            fg=state_colors.get(state, TEXT_SECONDARY)
+            text_color=state_colors.get(state, TEXT_SECONDARY)
         )
 
-        if state == RecordingState.RECORDING:
-            self.btn_start.config(state="disabled", bg=TEXT_SECONDARY)
-            self.btn_stop.config(state="normal", bg=ACCENT_RED)
+        recording = state == RecordingState.RECORDING
+        if recording:
+            self.btn_stop.configure(state="normal", fg_color=STOP_RED)
+            self.progress.grid()
+            self.progress.start()
         else:
-            self.btn_start.config(state="normal", bg=ACCENT_GREEN)
-            self.btn_stop.config(state="disabled", bg=TEXT_SECONDARY)
+            self.btn_stop.configure(state="disabled", fg_color=STOP_OFF)
+            self.progress.stop()
+            self.progress.grid_remove()
+
+        # Profile, output and topics are locked while recording
+        locked = "disabled" if recording else "normal"
+        for widget in (
+            self.profile_menu, self.btn_save_profile, self.entry_output, self.btn_browse,
+            *self.topic_boxes.values()
+        ):
+            widget.configure(state=locked)
+
+        self._update_start_button()
+        self._update_command()
 
     def show(self):
         """Show the GUI and start the event loop."""
@@ -632,4 +903,4 @@ class RecorderGUI:
     def update_topics(self, topics: List[str]):
         """Update available topics from external source."""
         self.available_topics = {t: {"name": t} for t in topics}
-        self._on_search()
+        self._rebuild_topics()

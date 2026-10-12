@@ -16,6 +16,7 @@ A graphical user interface for recording and managing MCAP (Multi-CAN Artifact P
 - ROS 2 (Humble or later recommended)
 - Python 3.8+
 - tkinter (usually included with Python)
+- CustomTkinter (`pip install customtkinter`)
 - PyYAML
 
 ## Installation
