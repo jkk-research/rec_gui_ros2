@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="rec_gui/resource/rec_gui01.png" alt="rec_gui" width="300">
+  <img src="rec_gui/resource/rec_gui01.png" alt="rec_gui" width="600">
 </p>
 
 # Installation
@@ -27,7 +27,7 @@ cd ~/ros2_ws/src
 ```
 
 ```bash
-git clone https://github.com/jkk-research/rec_gui
+git clone https://github.com/jkk-research/rec_gui_ros2
 ```
 
 ## Dependencies
@@ -55,7 +55,7 @@ source ~/ros2_ws/install/setup.bash
 ```
 
 ```bash
-ros2 run rec_gui rec_gui
+rec_gui
 ```
 
 # Additinal install
