@@ -1,15 +1,24 @@
 """Configuration management for rec_gui package."""
 
 import os
-import re
 import yaml
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# Values accepted by the rosbag2 MCAP storage plugin (--storage-config-file)
-MCAP_COMPRESSION = {"none": "None", "lz4": "Lz4", "zstd": "Zstd"}
-MCAP_COMPRESSION_LEVELS = ("Fastest", "Fast", "Default", "Slow", "Slowest")
+# ros2 bag record options, settable in recording: and overridable per profile
+# (config key, command line flag, fallback)
+RECORD_OPTIONS = (
+    ("max_cache_size", "--max-cache-size", 5242880),
+    ("storage_preset", "--storage-preset-profile", "zstd_fast"),
+    ("compression_mode", "--compression-mode", "file"),
+    ("compression_format", "--compression-format", "zstd"),
+    ("compression_level", "--compression-level", "fastest"),
+)
+# Values offered by the GUI, an empty compression level leaves the flag out
+STORAGE_PRESETS = ("none", "fastwrite", "zstd_fast", "zstd_small")
+COMPRESSION_MODES = ("none", "file", "message")
+COMPRESSION_LEVELS = ("", "fastest", "fast", "default", "slow", "slowest")
 
 
 class RecorderConfig:
@@ -95,12 +104,11 @@ class RecorderConfig:
             'recording': {
                 'profiles': {},  # Profiles ONLY from YAML
                 'default_profile': 'default',
-                'max_cache_size': 1048576000,
-                'mcap': {
-                    'compression': 'zstd',
-                    'compression_level': 'default',
-                    'chunk_size': 52428800,
-                },
+                'max_cache_size': 5242880,
+                'storage_preset': 'zstd_fast',
+                'compression_mode': 'file',
+                'compression_format': 'zstd',
+                'compression_level': 'fastest',
             },
             'topics': {
                 'include': [],
@@ -191,45 +199,39 @@ class RecorderConfig:
         profiles = self.get_nested("recording", "profiles") or {}
         return profiles.get(name) or {}
 
-    def get_storage_config_file(self, profile: str) -> Path:
-        """Get the MCAP writer options file passed to --storage-config-file."""
-        custom = self.get_profile(profile).get("storage_config_file")
-        if custom:
-            return Path(custom)
-        safe_name = re.sub(r"[^\w.-]", "_", profile)
-        return Path.home() / ".rec_gui" / f"mcap_writer_options_{safe_name}.yaml"
-
-    def get_mcap_options(self, profile: str) -> Dict[str, Any]:
-        """Get the MCAP writer options (chunkSize, compression, compressionLevel)."""
+    def get_record_options(self, profile: str) -> Dict[str, Any]:
+        """Get the ros2 bag record options of a profile, keyed by config key."""
         profile_data = self.get_profile(profile)
+        defaults = self.get_nested("recording") or {}
 
-        # A profile can point to its own writer options file
-        custom = profile_data.get("storage_config_file")
-        if custom and Path(custom).is_file():
-            with open(custom, "r") as f:
-                return yaml.safe_load(f) or {}
+        options = {}
+        for key, _, fallback in RECORD_OPTIONS:
+            value = profile_data.get(key, defaults.get(key, fallback))
+            options[key] = fallback if value is None else value
+        return options
 
-        defaults = self.get_nested("recording", "mcap") or {}
+    def set_record_option(self, profile: str, key: str, value: Any) -> None:
+        """Set a ros2 bag record option of a profile (not saved to file)."""
+        profiles = self.config.setdefault("recording", {}).setdefault("profiles", {})
+        if not profiles.get(profile):
+            profiles[profile] = {}
+        profiles[profile][key] = value
 
-        def setting(key, fallback):
-            return profile_data.get(key, defaults.get(key, fallback))
+    def get_record_arguments(self, profile: str) -> List[str]:
+        """Get the ros2 bag record arguments of a profile, unset options left out."""
+        options = self.get_record_options(profile)
+        compressing = str(options["compression_mode"]).lower() != "none"
 
-        compression = str(setting("compression", "zstd")).lower()
-        level = str(setting("compression_level", "default")).capitalize()
-        return {
-            "chunkSize": int(setting("chunk_size", 52428800)),
-            "compression": MCAP_COMPRESSION.get(compression, "Zstd"),
-            "compressionLevel": level if level in MCAP_COMPRESSION_LEVELS else "Default",
-        }
-
-    def write_storage_config(self, profile: str) -> Path:
-        """Write the MCAP writer options file, unless the profile brings its own."""
-        path = self.get_storage_config_file(profile)
-        if not self.get_profile(profile).get("storage_config_file"):
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "w") as f:
-                yaml.dump(self.get_mcap_options(profile), f, default_flow_style=False)
-        return path
+        arguments = []
+        for key, flag, _ in RECORD_OPTIONS:
+            value = str(options[key]).strip()
+            if not value:
+                continue
+            # A compression format is only valid together with a compression mode
+            if key == "compression_format" and not compressing:
+                continue
+            arguments += [flag, value]
+        return arguments
 
     def get_recording_name(self, profile: str, when: Optional[datetime] = None) -> str:
         """Get the name of the next recording, placeholders filled in."""
@@ -259,15 +261,11 @@ class RecorderConfig:
     ) -> List[str]:
         """Build the ros2 bag record command used for a recording."""
         output_dir = Path(output_dir or self.get_output_directory())
-        max_cache_size = self.get_profile(profile).get(
-            "max_cache_size", self.get("recording.max_cache_size", 1048576000)
-        )
 
         return [
             "ros2", "bag", "record",
             "-s", "mcap",
             "-o", str(output_dir / self.get_recording_name(profile, when)),
-            "--max-cache-size", str(max_cache_size),
-            "--storage-config-file", str(self.get_storage_config_file(profile)),
+            *self.get_record_arguments(profile),
             *topics,
         ]

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import customtkinter as ctk
 
-from .config import RecorderConfig
+from .config import COMPRESSION_LEVELS, COMPRESSION_MODES, RecorderConfig, STORAGE_PRESETS
 
 # ── Color Palette (light, dark) ────────────────────────────────────────────
 BG_INSET = ("#F9F9FA", "#1D1E1E")
@@ -34,6 +34,8 @@ STOP_OFF = ("gray70", "#4A4D50")
 FONT_MONO = "DejaVu Sans Mono"
 TOPIC_COLUMN_WIDTH = 260
 NO_TOPICS_PLACEHOLDER = "<no topics selected>"
+NO_OPTION = "-"
+BYTES_PER_MB = 1024 * 1024
 
 
 class RecordingState(Enum):
@@ -125,7 +127,9 @@ class RecorderGUI:
 
         content = ctk.CTkFrame(self.root, fg_color="transparent")
         content.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
-        content.grid_columnconfigure((0, 1), weight=1, uniform="cards")
+        # The status card holds the record options, it gets 3/5 of the width
+        content.grid_columnconfigure(0, weight=3, uniform="cards")
+        content.grid_columnconfigure(1, weight=2, uniform="cards")
         content.grid_rowconfigure(1, weight=1)
 
         self._create_status_card(content)
@@ -249,27 +253,67 @@ class RecorderGUI:
         )
         self.lbl_duration.pack(fill="x", padx=14, pady=(0, 8))
 
-        # MCAP writer options of the selected profile
+        # ros2 bag record options of the selected profile
         options_box = ctk.CTkFrame(card, fg_color=BG_INSET, corner_radius=6)
         options_box.grid(row=1, column=1, sticky="nsew", padx=(6, 20), pady=14)
-        options_box.grid_rowconfigure((0, 4), weight=1)
-        options_box.grid_columnconfigure(1, weight=1)
+        options_box.grid_rowconfigure((0, 5), weight=1)
+        # Labels on the left, the controls share a column on the right
+        options_box.grid_columnconfigure(0, weight=1)
 
-        self.lbl_mcap_options: Dict[str, ctk.CTkLabel] = {}
-        for row, key in enumerate(("chunkSize", "compression", "compressionLevel"), 1):
+        # Dropdowns, the values are passed to ros2 bag record as they are
+        self.option_vars: Dict[str, tk.StringVar] = {}
+        self.option_menus: Dict[str, ctk.CTkOptionMenu] = {}
+        dropdowns = (
+            ("storage_preset", STORAGE_PRESETS),
+            ("compression_mode", COMPRESSION_MODES),
+            ("compression_level", COMPRESSION_LEVELS),
+        )
+        labels = ("maxCache", "storagePreset", "compressionMode", "compressionLevel")
+        for row, label in enumerate(labels, 1):
             ctk.CTkLabel(
                 options_box,
-                text=key,
+                text=label,
                 font=self.font_mono,
                 text_color=TEXT_SECONDARY,
                 height=18,
                 anchor="w"
-            ).grid(row=row, column=0, sticky="w", padx=(14, 12))
-            value = ctk.CTkLabel(
-                options_box, text="", font=self.font_mono, height=18, anchor="w"
+            ).grid(row=row, column=0, sticky="w", padx=(14, 12), pady=2)
+
+        # Cache size is edited in MB, the configuration keeps bytes
+        cache_box = ctk.CTkFrame(options_box, fg_color="transparent")
+        cache_box.grid(row=1, column=1, sticky="ew", padx=(0, 14), pady=2)
+        cache_box.grid_columnconfigure(0, weight=1)
+
+        self.cache_size_var = tk.StringVar()
+        self.entry_cache_size = ctk.CTkEntry(
+            cache_box,
+            textvariable=self.cache_size_var,
+            font=self.font_mono,
+            width=80,
+            height=24
+        )
+        self.entry_cache_size.grid(row=0, column=0, sticky="ew")
+        self.entry_cache_size.bind("<Return>", self._on_cache_size_edited)
+        self.entry_cache_size.bind("<FocusOut>", self._on_cache_size_edited)
+        ctk.CTkLabel(
+            cache_box, text="MB", font=self.font_mono, height=18, anchor="e"
+        ).grid(row=0, column=1, sticky="e", padx=(6, 0))
+
+        for row, (key, values) in enumerate(dropdowns, 2):
+            self.option_vars[key] = tk.StringVar()
+            menu = ctk.CTkOptionMenu(
+                options_box,
+                values=[value or NO_OPTION for value in values],
+                variable=self.option_vars[key],
+                font=self.font_mono,
+                dropdown_font=self.font_mono,
+                width=130,
+                height=24,
+                dynamic_resizing=False,
+                command=lambda value, key=key: self._on_option_selected(key, value)
             )
-            value.grid(row=row, column=1, sticky="w", padx=(0, 14))
-            self.lbl_mcap_options[key] = value
+            menu.grid(row=row, column=1, sticky="e", padx=(0, 14), pady=2)
+            self.option_menus[key] = menu
 
         # Activity bar, only shown while recording
         self.progress = ctk.CTkProgressBar(card, height=8, mode="indeterminate")
@@ -604,9 +648,10 @@ class RecorderGUI:
             self.config.set("output.directory", output_dir)
             self.output_var.set(output_dir)
 
-        for key, label in self.lbl_mcap_options.items():
-            value = self.config.get_mcap_options(profile_name).get(key, "")
-            label.configure(text=f'"{value}"' if isinstance(value, str) else str(value))
+        record_options = self.config.get_record_options(profile_name)
+        self.cache_size_var.set(f"{int(record_options['max_cache_size']) / BYTES_PER_MB:g}")
+        for key, var in self.option_vars.items():
+            var.set(str(record_options[key]) or NO_OPTION)
 
         # Auto-select topics from the profile
         self.selected_topics = set(profile_data.get("topics") or [])
@@ -677,6 +722,7 @@ class RecorderGUI:
             return
 
         self._on_output_edited()
+        self._on_cache_size_edited()
         self._set_state(RecordingState.STARTING)
 
         if self.ros_node and hasattr(self.ros_node, "start_recording"):
@@ -771,7 +817,7 @@ class RecorderGUI:
 
     # ─ Profile and output ──────────────────────────────────────────────────────
     def _save_profile(self):
-        """Save the selected topics and output folder as a profile."""
+        """Save the selected topics, output folder and record options as a profile."""
         current = self.profile_var.get()
         name = ctk.CTkInputDialog(
             title="Save profile",
@@ -782,6 +828,7 @@ class RecorderGUI:
         name = name.strip() or current
 
         self._on_output_edited()
+        self._on_cache_size_edited()
         profile_data = dict(self.config.get_profile(name) or self.config.get_profile(current))
         profile_data["topics"] = sorted(self.selected_topics)
         profile_data["output_directory"] = self.output_var.get().strip()
@@ -797,6 +844,26 @@ class RecorderGUI:
         self.profile_var.set(name)
         self._on_profile_changed()
         messagebox.showinfo("Profile saved", f"Profile '{name}' saved to:\n{save_path}")
+
+    def _on_option_selected(self, key: str, value: str):
+        """Apply a record option picked from a dropdown to the current profile."""
+        value = "" if value == NO_OPTION else value
+        self.config.set_record_option(self.profile_var.get(), key, value)
+        self._update_command()
+
+    def _on_cache_size_edited(self, event=None):
+        """Apply the cache size typed into the entry, given in MB."""
+        profile = self.profile_var.get()
+        try:
+            size = int(float(self.cache_size_var.get().replace(",", ".")) * BYTES_PER_MB)
+            if size < 0:
+                raise ValueError
+            self.config.set_record_option(profile, "max_cache_size", size)
+        except ValueError:
+            # Not a size, show the one in use again
+            size = int(self.config.get_record_options(profile)["max_cache_size"])
+        self.cache_size_var.set(f"{size / BYTES_PER_MB:g}")
+        self._update_command()
 
     def _on_output_edited(self, event=None):
         """Apply the output folder typed into the entry."""
@@ -885,10 +952,11 @@ class RecorderGUI:
             self.progress.stop()
             self.progress.grid_remove()
 
-        # Profile, output and topics are locked while recording
+        # Profile, output, record options and topics are locked while recording
         locked = "disabled" if recording else "normal"
         for widget in (
             self.profile_menu, self.btn_save_profile, self.entry_output, self.btn_browse,
+            self.entry_cache_size, *self.option_menus.values(),
             *self.topic_boxes.values()
         ):
             widget.configure(state=locked)

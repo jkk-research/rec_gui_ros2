@@ -115,8 +115,14 @@ recording:
     default:
       description: "Default recording profile"
       topics: []
-      compression: "zstd"
-      chunk_size: 52428800  # 50 MB
+      storage_preset: "zstd_fast"  # overrides the value below
+
+  # ros2 bag record options, profiles can override each of them
+  max_cache_size: 5242880       # --max-cache-size, 5 MB
+  storage_preset: "zstd_fast"   # --storage-preset-profile
+  compression_mode: "file"      # --compression-mode
+  compression_format: "zstd"    # --compression-format, only with a compression mode
+  compression_level: "fastest"  # --compression-level, left out if empty
 ```
 
 ### Topic Configuration

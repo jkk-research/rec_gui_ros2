@@ -2,7 +2,7 @@
 
 <p align="center">
   <b>MCAP Recording GUI for ROS 2</b><br>
-  A simple, easy-to-use interface for recording and managing MCAP files in ROS 2.
+  A simple, easy-to-use interface for recording MCAP files in ROS 2.
 </p>
 
 <p align="center">

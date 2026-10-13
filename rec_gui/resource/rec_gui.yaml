@@ -15,16 +15,12 @@ recording:
     default:
       description: "Default recording profile - all topics"
       topics: []
-      compression: "zstd"
-      chunk_size: 52428800  # 50 MB
 
     bosch01:
       description: "Bosch01 - Lexus3 configuration"
       output_directory: "/mnt/bag/"
       output_prefix: "lexus3_"
-      compression: "zstd"
-      compression_level: "fastest"
-      chunk_size: 10485760  # 10 MB
+      storage_preset: "zstd_fast"
       topics:
         - /lexus3/gps/nova/current_pose
         - /lexus3/gps/nova/fix
@@ -44,14 +40,18 @@ recording:
   # Default selected profile
   default_profile: "default"
 
-  # Message cache of ros2 bag record in bytes (--max-cache-size)
-  max_cache_size: 1048576000
-
-  # MCAP writer options (--storage-config-file), profiles can override them
-  mcap:
-    compression: "zstd"  # none, lz4, zstd
-    compression_level: "default"  # fastest, fast, default, slow, slowest
-    chunk_size: 52428800  # 50 MB in bytes
+  # ros2 bag record options, profiles can override each of them
+  # Message cache in bytes (--max-cache-size)
+  max_cache_size: 5242880  # 5 MB
+  # MCAP storage preset (--storage-preset-profile): none, fastwrite, zstd_fast, zstd_small
+  storage_preset: "zstd_fast"
+  # rosbag2 compression (--compression-mode): none, file, message
+  compression_mode: "file"
+  # Compression format (--compression-format), only used if compression_mode is not none
+  compression_format: "zstd"
+  # Compression level (--compression-level), left out if empty
+  # Not accepted by ros2 bag record of ROS 2 Humble
+  compression_level: "fastest"
 
 # Topic selection (leave empty to show all available topics)
 topics:

@@ -85,7 +85,6 @@ class RecRecorderNode(Node):
         cmd = self.config.build_record_command(topics, profile, output_dir)
         self.last_output = Path(cmd[cmd.index("-o") + 1])
         self.last_output.parent.mkdir(parents=True, exist_ok=True)
-        self.config.write_storage_config(profile)
         self.get_logger().info(" ".join(cmd))
 
         # ros2 bag record logs a lot, a pipe nobody reads would block it
