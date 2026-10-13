@@ -180,6 +180,7 @@ class RecorderConfig:
         try:
             with open(save_path, 'w') as f:
                 yaml.dump(self.config, f, default_flow_style=False)
+            self.config_path = Path(save_path)
         except Exception as e:
             print(f"Error saving config to {save_path}: {e}")
 
@@ -198,6 +199,21 @@ class RecorderConfig:
         """Get the settings of a recording profile (empty if unknown)."""
         profiles = self.get_nested("recording", "profiles") or {}
         return profiles.get(name) or {}
+
+    def reload_profile(self, name: str) -> Dict[str, Any]:
+        """Read a profile from the YAML file again, dropping unsaved changes."""
+        try:
+            with open(self.config_path, 'r') as f:
+                content = self._expand_paths(yaml.safe_load(f) or {})
+            profile = ((content.get("recording") or {}).get("profiles") or {}).get(name)
+        except Exception as e:
+            print(f"Error reading config file {self.config_path}: {e}")
+            profile = None
+
+        # Not in the file (or no file), keep what is loaded
+        if profile:
+            self.config.setdefault("recording", {}).setdefault("profiles", {})[name] = profile
+        return self.get_profile(name)
 
     def get_record_options(self, profile: str) -> Dict[str, Any]:
         """Get the ros2 bag record options of a profile, keyed by config key."""

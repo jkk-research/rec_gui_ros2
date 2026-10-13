@@ -640,7 +640,8 @@ class RecorderGUI:
     def _on_profile_changed(self, *args):
         """Auto-select topics and update settings when profile changes."""
         profile_name = self.profile_var.get()
-        profile_data = self.config.get_profile(profile_name)
+        # Topics and record options come from the YAML, unsaved changes are dropped
+        profile_data = self.config.reload_profile(profile_name)
 
         # Update output directory if profile specifies one
         if "output_directory" in profile_data:

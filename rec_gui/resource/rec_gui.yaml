@@ -10,48 +10,126 @@ output:
   auto_create: true
 
 recording:
-  # Default recording profiles
+  default_profile: default
   profiles:
-    default:
-      description: "Default recording profile - all topics"
-      topics: []
-
     bosch01:
-      description: "Bosch01 - Lexus3 configuration"
-      output_directory: "/mnt/bag/"
-      output_prefix: "lexus3_"
-      storage_preset: "zstd_fast"
+      compression_format: zstd
+      compression_level: fastest
+      compression_mode: file  
+      description: Bosch01 - Lexus3 configuration
+      max_cache_size: 5242880
+      output_directory: /mnt/bag/
+      output_prefix: lexus3_
+      storage_preset: zstd_fast
       topics:
-        - /lexus3/gps/nova/current_pose
-        - /lexus3/gps/nova/fix
-        - /lexus3/gps/nova/imu
-        - /lexus3/gps/nova/inspvax
-        - /lexus3/os_center/points
-        - /lexus3/os_left/points
-        - /lexus3/os_right/points
-        - /lexus3/zed2i/zed_node/left/image_rect_color/compressed
-        - /lexus3/vehicle_speed_kmph
-        - /lexus3/vehicle_status
-        - /nissan9/battery/soc
-        - /nissan9/battery/soh
-        - /tf
-        - /tf_static
+      - /lexus3/gps/nova/current_pose
+      - /lexus3/gps/nova/fix 
+      - /lexus3/gps/nova/imu
+      - /lexus3/gps/nova/inspvax
+      - /lexus3/os_center/points
+      - /lexus3/os_left/points
+      - /lexus3/os_right/points
+      - /lexus3/zed2i/zed_node/left/image_rect_color/compressed 
+      - /lexus3/vehicle_speed_kmph
+      - /lexus3/vehicle_status
+      - /tf
+      - /tf_static
+    crp_radar01:
+      compression_format: zstd 
+      compression_level: fast
+      compression_mode: file
+      description: CRP radar configuration
+      max_cache_size: 5242880 
+      storage_preset: zstd_fast
+      topics:
+      - /radar_front_left
+      - /radar_front_right
+      - /radar_front_center
+      - /radar_rear_left 
+      - /radar_rear_right
+      - /vehicle/steering
+      - /vehicle/throttle
+      - /vehicle/brake
+    default:  
+      compression_format: zstd
+      compression_level: fastest
+      compression_mode: file
+      description: Default recording profile - all topics 
+      max_cache_size: 4194304
+      storage_preset: zstd_fast
+      topics: []
+    kaposvar01:
+      compression_format: zstd
+      compression_level: fastest 
+      compression_mode: file
+      description: Kaposvar01 configuration
+      max_cache_size: 7340032
+      storage_preset: zstd_fast  
+      topics:
+      - /gps/fix
+      - /imu/data_raw
+      - /imu/mag
+      - /os_cloud_node/points 
+      - /tf
+      - /tf_static
+    lexus_cam_calib:
+      compression_format: fake_comp
+      compression_level: fastest
+      compression_mode: none 
+      description: Lexus camera calibration setup
+      max_cache_size: 9437184
+      storage_preset: zstd_fast
+      topics:
+      - /lexus3/zed2i/zed_node/left/camera_info 
+      - /lexus3/zed2i/zed_node/right/camera_info
+      - /lexus3/zed2i/zed_node/left/image_rect_color
+      - /lexus3/zed2i/zed_node/right/image_rect_color
+      - /lexus3/zed2i/zed_node/depth/camera_info 
+      - /lexus3/zed2i/zed_node/depth/depth_registered
+    lexus_slam01:
+      compression_format: zstd
+      compression_level: fastest 
+      compression_mode: file
+      description: Lexus SLAM configuration
+      max_cache_size: 5242880
+      storage_preset: zstd_fast
+      topics: 
+      - /lexus3/gps/nova/current_pose
+      - /lexus3/gps/nova/odom
+      - /lexus3/os_cloud_node/map
+      - /lexus3/os_cloud_node/points
+      - /lexus3/zed2i/zed_node/pose 
+      - /lexus3/zed2i/zed_node/left/image_rect_color/compressed
+      - /lexus3/zed2i/zed_node/left/camera_info
+    localization:
+      compression_format: zstd 
+      compression_level: slow
+      compression_mode: message
+      description: General localization topics
+      max_cache_size: 10485760
+      storage_preset: zstd_fast  
+      topics:
+      - /odometry/gps
+      - /odometry/imu
+      - /points/lidar_front
+      - /points/lidar_rear 
+      - /tf
+      - /tf_static
+    wheeltec01:
+      compression_format: zstd
+      compression_level: fastest
+      compression_mode: file 
+      description: Wheeltec01 configuration
+      max_cache_size: 8388608
+      storage_preset: zstd_fast
+      topics:
+      - /ackermann_cmd
+      - /arm_base_position_controller/odom 
+      - /battery
+      - /odom
+      - /scan
+      - /wheeltec_joy/joy
 
-  # Default selected profile
-  default_profile: "default"
-
-  # ros2 bag record options, profiles can override each of them
-  # Message cache in bytes (--max-cache-size)
-  max_cache_size: 5242880  # 5 MB
-  # MCAP storage preset (--storage-preset-profile): none, fastwrite, zstd_fast, zstd_small
-  storage_preset: "zstd_fast"
-  # rosbag2 compression (--compression-mode): none, file, message
-  compression_mode: "file"
-  # Compression format (--compression-format), only used if compression_mode is not none
-  compression_format: "zstd"
-  # Compression level (--compression-level), left out if empty
-  # Not accepted by ros2 bag record of ROS 2 Humble
-  compression_level: "fastest"
 
 # Topic selection (leave empty to show all available topics)
 topics:
