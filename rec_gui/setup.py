@@ -18,8 +18,9 @@ setup(
         ),
         (
             f"share/{package_name}",
-            ["resource/rec_gui.yaml"],
+            ["package.xml", "resource/rec_gui.yaml"],
         ),
+        ("bin", ["scripts/rec_gui"]),
     ],
     install_requires=[
         "setuptools",
