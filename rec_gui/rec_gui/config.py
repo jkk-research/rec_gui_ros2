@@ -1,6 +1,7 @@
 """Configuration management for rec_gui package."""
 
 import os
+import re
 import yaml
 from datetime import datetime
 from pathlib import Path
@@ -11,14 +12,27 @@ from typing import Any, Dict, List, Optional
 RECORD_OPTIONS = (
     ("max_cache_size", "--max-cache-size", 5242880),
     ("storage_preset", "--storage-preset-profile", "zstd_fast"),
-    ("compression_mode", "--compression-mode", "file"),
-    ("compression_format", "--compression-format", "zstd"),
-    ("compression_level", "--compression-level", "fastest"),
 )
-# Values offered by the GUI, an empty compression level leaves the flag out
+# No --compression-mode (none): the zstd storage presets already compress the
+# MCAP chunks, file or message compression would make Foxglove unable to read it
+# Values offered by the GUI
 STORAGE_PRESETS = ("none", "fastwrite", "zstd_fast", "zstd_small")
-COMPRESSION_MODES = ("none", "file", "message")
-COMPRESSION_LEVELS = ("", "fastest", "fast", "default", "slow", "slowest")
+
+# Recording names are <output_prefix>_<date_profile>.mcap
+DEFAULT_OUTPUT_PREFIX = "recording"
+DEFAULT_DATE_PROFILE = "yyyy-MM-dd_HH-mm-ss"
+# Date patterns as in Java, C# and ICU: MM is the month, mm the minutes
+DATE_TOKENS = {
+    "yyyy": "%Y", "yy": "%y", "MM": "%m", "dd": "%d", "HH": "%H", "mm": "%M", "ss": "%S",
+}
+DATE_TOKEN_PATTERN = re.compile("|".join(DATE_TOKENS))
+
+
+def format_date_profile(pattern: str, when: datetime) -> str:
+    """Fill in a date profile like yyyy-MM-dd_HH-mm-ss, or a Python strftime one (%Y-%m-%d)."""
+    if "%" in pattern:
+        return when.strftime(pattern)
+    return DATE_TOKEN_PATTERN.sub(lambda match: when.strftime(DATE_TOKENS[match.group()]), pattern)
 
 
 class RecorderConfig:
@@ -98,17 +112,16 @@ class RecorderConfig:
         return {
             'output': {
                 'directory': str(Path.home() / '.rec_gui' / 'recordings'),
-                'filename_template': 'recording_{timestamp}.mcap',
+                'output_prefix': DEFAULT_OUTPUT_PREFIX,
+                'date_profile': DEFAULT_DATE_PROFILE,
                 'auto_create': True,
+                'daily_subfolder': False,
             },
             'recording': {
                 'profiles': {},  # Profiles ONLY from YAML
                 'default_profile': 'default',
                 'max_cache_size': 5242880,
                 'storage_preset': 'zstd_fast',
-                'compression_mode': 'file',
-                'compression_format': 'zstd',
-                'compression_level': 'fastest',
             },
             'topics': {
                 'include': [],
@@ -236,37 +249,37 @@ class RecorderConfig:
     def get_record_arguments(self, profile: str) -> List[str]:
         """Get the ros2 bag record arguments of a profile, unset options left out."""
         options = self.get_record_options(profile)
-        compressing = str(options["compression_mode"]).lower() != "none"
 
         arguments = []
         for key, flag, _ in RECORD_OPTIONS:
             value = str(options[key]).strip()
-            if not value:
-                continue
-            # A compression format is only valid together with a compression mode
-            if key == "compression_format" and not compressing:
-                continue
-            arguments += [flag, value]
+            if value:
+                arguments += [flag, value]
         return arguments
 
-    def get_recording_name(self, profile: str, when: Optional[datetime] = None) -> str:
-        """Get the name of the next recording, placeholders filled in."""
-        when = when or datetime.now()
+    def get_name_options(self, profile: str) -> Dict[str, str]:
+        """Get the output_prefix and date_profile of a profile."""
         profile_data = self.get_profile(profile)
-
-        template = profile_data.get("filename_template")
-        if not template and "output_prefix" in profile_data:
-            template = f"{profile_data['output_prefix']}{{timestamp}}.mcap"
-        if not template:
-            template = self.get("output.filename_template", "recording_{timestamp}.mcap")
-
-        date = when.strftime("%Y_%m_%d")
-        time = when.strftime("%H_%M_%S")
-        return (
-            template.replace("{timestamp}", f"{date}-{time}")
-            .replace("{date}", date)
-            .replace("{time}", time)
+        prefix = profile_data.get(
+            "output_prefix", self.get("output.output_prefix", DEFAULT_OUTPUT_PREFIX)
         )
+        date_profile = profile_data.get("date_profile") or self.get(
+            "output.date_profile", DEFAULT_DATE_PROFILE
+        )
+        return {"output_prefix": str(prefix or ""), "date_profile": str(date_profile)}
+
+    def get_recording_name(self, profile: str, when: Optional[datetime] = None) -> str:
+        """Get the name of the next recording, e.g. lexus3_2026-10-16_12_55_08.mcap."""
+        options = self.get_name_options(profile)
+        date = format_date_profile(options["date_profile"], when or datetime.now())
+        # A prefix may already end with the separator (lexus3_)
+        prefix = options["output_prefix"].strip().rstrip("_")
+        return f"{prefix}_{date}.mcap" if prefix else f"{date}.mcap"
+
+    def get_daily_subfolder(self, profile: str) -> bool:
+        """Whether recordings of a profile go into a daily sub-folder."""
+        default = self.get("output.daily_subfolder", False)
+        return bool(self.get_profile(profile).get("daily_subfolder", default))
 
     def build_record_command(
         self,
@@ -276,7 +289,11 @@ class RecorderConfig:
         when: Optional[datetime] = None,
     ) -> List[str]:
         """Build the ros2 bag record command used for a recording."""
+        when = when or datetime.now()
         output_dir = Path(output_dir or self.get_output_directory())
+        if self.get_daily_subfolder(profile):
+            # e.g. 2026_10_16_bosch01
+            output_dir /= f"{when.strftime('%Y_%m_%d')}_{profile}"
 
         return [
             "ros2", "bag", "record",

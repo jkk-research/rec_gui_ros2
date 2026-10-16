@@ -1,4 +1,4 @@
-"""REC GUI - MCAP Recording GUI for ROS 2."""
+""" rec_gui - MCAP Recording GUI for ROS 2."""
 
 from .config import RecorderConfig
 from .recorder_gui import RecorderGUI, RecordingState

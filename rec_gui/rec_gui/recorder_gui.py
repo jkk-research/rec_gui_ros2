@@ -13,7 +13,8 @@ from pathlib import Path
 
 import customtkinter as ctk
 
-from .config import COMPRESSION_LEVELS, COMPRESSION_MODES, RecorderConfig, STORAGE_PRESETS
+from .config import RecorderConfig, STORAGE_PRESETS
+from .upload_dialog import KleinkramUploadDialog
 
 # ── Color Palette (light, dark) ────────────────────────────────────────────
 BG_INSET = ("#F9F9FA", "#1D1E1E")
@@ -58,7 +59,7 @@ class RecorderGUI:
 
         ctk.set_appearance_mode("dark")
 
-        self.root.title("REC GUI - MCAP Recorder")
+        self.root.title("rec_gui - MCAP Recorder")
         self.root.geometry(
             f"{self.config.get('gui.window_width', 1100)}"
             f"x{self.config.get('gui.window_height', 760)}"
@@ -127,12 +128,9 @@ class RecorderGUI:
 
         content = ctk.CTkFrame(self.root, fg_color="transparent")
         content.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
-        # The status card holds the record options, it gets 3/5 of the width
-        content.grid_columnconfigure(0, weight=3, uniform="cards")
-        content.grid_columnconfigure(1, weight=2, uniform="cards")
+        content.grid_columnconfigure(0, weight=1)
         content.grid_rowconfigure(1, weight=1)
 
-        self._create_status_card(content)
         self._create_profile_card(content)
         self._create_topics_card(content)
         self._create_command_card(content)
@@ -144,11 +142,11 @@ class RecorderGUI:
         sidebar.grid(row=0, column=0, sticky="nsew")
         sidebar.grid_propagate(False)
         sidebar.grid_columnconfigure(0, weight=1)
-        sidebar.grid_rowconfigure(7, weight=1)
+        sidebar.grid_rowconfigure(9, weight=1)
 
         ctk.CTkLabel(
             sidebar,
-            text="REC GUI",
+            text="rec_gui",
             font=self.font_title,
             anchor="w"
         ).grid(row=0, column=0, sticky="ew", padx=20, pady=(24, 17))
@@ -174,67 +172,10 @@ class RecorderGUI:
         )
         self.btn_stop.grid(row=2, column=0, sticky="ew", padx=20, pady=7)
 
-        # Recording tools (rosbag info, mcap info, foxglove)
-        ctk.CTkLabel(
-            sidebar,
-            text="Last recording",
-            font=self.font_small,
-            text_color=TEXT_SECONDARY,
-            anchor="w"
-        ).grid(row=3, column=0, sticky="ew", padx=20, pady=(15, 0))
-
-        for row, tool in enumerate(("Rosbag info", "MCAP info", "Open in Foxglove"), 4):
-            self._outline_button(
-                sidebar, tool, lambda t=tool: self._on_tool_selected(t),
-                height=34
-            ).grid(row=row, column=0, sticky="ew", padx=20, pady=7)
-
-        ctk.CTkLabel(
-            sidebar, text="Appearance mode:", font=self.font_normal
-        ).grid(row=8, column=0, sticky="ew", padx=20, pady=(7, 0))
-        self.appearance_menu = ctk.CTkOptionMenu(
-            sidebar,
-            values=["Dark", "Light", "System"],
-            font=self.font_normal,
-            height=32,
-            command=self._on_appearance_changed
-        )
-        self.appearance_menu.grid(row=9, column=0, sticky="ew", padx=20, pady=7)
-
-        ctk.CTkLabel(
-            sidebar, text="UI scaling:", font=self.font_normal
-        ).grid(row=10, column=0, sticky="ew", padx=20, pady=(7, 0))
-        self.scaling_menu = ctk.CTkOptionMenu(
-            sidebar,
-            values=["80%", "90%", "100%", "110%", "120%"],
-            font=self.font_normal,
-            height=32,
-            command=self._on_scaling_changed
-        )
-        self.scaling_menu.set("100%")
-        self.scaling_menu.grid(row=11, column=0, sticky="ew", padx=20, pady=(7, 24))
-
-    def _create_status_card(self, content):
-        """Create the recording status card."""
-        # ─ Recording Status ────────────────────────────────────────────────────
-        card = ctk.CTkFrame(content, corner_radius=8)
-        card.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
-        card.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(
-            card, text="Recording status", font=self.font_large
-        ).grid(row=0, column=0, sticky="w", padx=20, pady=(16, 0))
-
-        self.status_indicator = ctk.CTkLabel(
-            card,
-            text="● Ready",
-            font=ctk.CTkFont(size=13),
-            text_color=ACCENT_GREEN
-        )
-        self.status_indicator.grid(row=0, column=1, sticky="e", padx=20, pady=(16, 0))
-
-        duration_box = ctk.CTkFrame(card, fg_color=BG_INSET, corner_radius=6)
-        duration_box.grid(row=1, column=0, sticky="nsew", padx=(20, 6), pady=14)
+        # Duration and recording state
+        duration_box = ctk.CTkFrame(sidebar, fg_color=BG_INSET, corner_radius=6)
+        duration_box.grid(row=3, column=0, sticky="ew", padx=20, pady=7)
+        duration_box.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
             duration_box,
@@ -243,7 +184,16 @@ class RecorderGUI:
             text_color=TEXT_SECONDARY,
             height=16,
             anchor="w"
-        ).pack(fill="x", padx=14, pady=(10, 0))
+        ).grid(row=0, column=0, sticky="w", padx=(12, 0), pady=(8, 0))
+
+        self.status_indicator = ctk.CTkLabel(
+            duration_box,
+            text="● Ready",
+            font=self.font_small,
+            text_color=ACCENT_GREEN,
+            height=16
+        )
+        self.status_indicator.grid(row=0, column=1, sticky="e", padx=(0, 12), pady=(8, 0))
 
         self.lbl_duration = ctk.CTkLabel(
             duration_box,
@@ -251,85 +201,69 @@ class RecorderGUI:
             font=self.font_duration,
             anchor="w"
         )
-        self.lbl_duration.pack(fill="x", padx=14, pady=(0, 8))
-
-        # ros2 bag record options of the selected profile
-        options_box = ctk.CTkFrame(card, fg_color=BG_INSET, corner_radius=6)
-        options_box.grid(row=1, column=1, sticky="nsew", padx=(6, 20), pady=14)
-        options_box.grid_rowconfigure((0, 5), weight=1)
-        # Labels on the left, the controls share a column on the right
-        options_box.grid_columnconfigure(0, weight=1)
-
-        # Dropdowns, the values are passed to ros2 bag record as they are
-        self.option_vars: Dict[str, tk.StringVar] = {}
-        self.option_menus: Dict[str, ctk.CTkOptionMenu] = {}
-        dropdowns = (
-            ("storage_preset", STORAGE_PRESETS),
-            ("compression_mode", COMPRESSION_MODES),
-            ("compression_level", COMPRESSION_LEVELS),
-        )
-        labels = ("maxCache", "storagePreset", "compressionMode", "compressionLevel")
-        for row, label in enumerate(labels, 1):
-            ctk.CTkLabel(
-                options_box,
-                text=label,
-                font=self.font_mono,
-                text_color=TEXT_SECONDARY,
-                height=18,
-                anchor="w"
-            ).grid(row=row, column=0, sticky="w", padx=(14, 12), pady=2)
-
-        # Cache size is edited in MB, the configuration keeps bytes
-        cache_box = ctk.CTkFrame(options_box, fg_color="transparent")
-        cache_box.grid(row=1, column=1, sticky="ew", padx=(0, 14), pady=2)
-        cache_box.grid_columnconfigure(0, weight=1)
-
-        self.cache_size_var = tk.StringVar()
-        self.entry_cache_size = ctk.CTkEntry(
-            cache_box,
-            textvariable=self.cache_size_var,
-            font=self.font_mono,
-            width=80,
-            height=24
-        )
-        self.entry_cache_size.grid(row=0, column=0, sticky="ew")
-        self.entry_cache_size.bind("<Return>", self._on_cache_size_edited)
-        self.entry_cache_size.bind("<FocusOut>", self._on_cache_size_edited)
-        ctk.CTkLabel(
-            cache_box, text="MB", font=self.font_mono, height=18, anchor="e"
-        ).grid(row=0, column=1, sticky="e", padx=(6, 0))
-
-        for row, (key, values) in enumerate(dropdowns, 2):
-            self.option_vars[key] = tk.StringVar()
-            menu = ctk.CTkOptionMenu(
-                options_box,
-                values=[value or NO_OPTION for value in values],
-                variable=self.option_vars[key],
-                font=self.font_mono,
-                dropdown_font=self.font_mono,
-                width=130,
-                height=24,
-                dynamic_resizing=False,
-                command=lambda value, key=key: self._on_option_selected(key, value)
-            )
-            menu.grid(row=row, column=1, sticky="e", padx=(0, 14), pady=2)
-            self.option_menus[key] = menu
+        self.lbl_duration.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 8))
 
         # Activity bar, only shown while recording
-        self.progress = ctk.CTkProgressBar(card, height=8, mode="indeterminate")
-        self.progress.grid(row=2, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 16))
+        self.progress = ctk.CTkProgressBar(duration_box, height=6, mode="indeterminate")
+        self.progress.grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 10))
         self.progress.grid_remove()
 
+        # Recording tools (rosbag info, mcap info, foxglove)
+        ctk.CTkLabel(
+            sidebar,
+            text="Last recording",
+            font=self.font_small,
+            text_color=TEXT_SECONDARY,
+            anchor="w"
+        ).grid(row=4, column=0, sticky="ew", padx=20, pady=(15, 0))
+
+        tools = ("Rosbag info", "MCAP info", "Open in Foxglove", "Upload to Kleinkram")
+        for row, tool in enumerate(tools, 5):
+            self._outline_button(
+                sidebar, tool, lambda t=tool: self._on_tool_selected(t),
+                height=34
+            ).grid(row=row, column=0, sticky="ew", padx=20, pady=7)
+
+        ctk.CTkLabel(
+            sidebar, text="Appearance mode:", font=self.font_normal
+        ).grid(row=10, column=0, sticky="ew", padx=20, pady=(7, 0))
+        self.appearance_menu = ctk.CTkOptionMenu(
+            sidebar,
+            values=["Dark", "Light", "System"],
+            font=self.font_normal,
+            height=32,
+            command=self._on_appearance_changed
+        )
+        self.appearance_menu.grid(row=11, column=0, sticky="ew", padx=20, pady=7)
+
+        ctk.CTkLabel(
+            sidebar, text="UI scaling:", font=self.font_normal
+        ).grid(row=12, column=0, sticky="ew", padx=20, pady=(7, 0))
+        self.scaling_menu = ctk.CTkOptionMenu(
+            sidebar,
+            values=["80%", "90%", "100%", "110%", "120%"],
+            font=self.font_normal,
+            height=32,
+            command=self._on_scaling_changed
+        )
+        self.scaling_menu.set("100%")
+        self.scaling_menu.grid(row=13, column=0, sticky="ew", padx=20, pady=(7, 24))
+
     def _create_profile_card(self, content):
-        """Create the recording profile and output folder card."""
+        """Create the recording profile card: profile, output and record options."""
         # ─ Recording Profile ───────────────────────────────────────────────────
         card = ctk.CTkFrame(content, corner_radius=8)
-        card.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
-        card.grid_columnconfigure(0, weight=1)
+        card.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        card.grid_columnconfigure((0, 1), weight=1, uniform="profile")
 
         ctk.CTkLabel(
             card, text="Recording profile", font=self.font_large, anchor="w"
         ).grid(row=0, column=0, columnspan=2, sticky="ew", padx=20, pady=(16, 6))
+
+        # Left: profile, output folder and daily sub-folder
+        left = ctk.CTkFrame(card, fg_color="transparent")
+        left.grid(row=1, column=0, sticky="nsew", padx=(20, 12), pady=(0, 16))
+        left.grid_columnconfigure(0, weight=1)
 
         profiles = list((self.config.get_nested("recording", "profiles") or {}).keys())
         default_profile = self.config.get_nested("recording", "default_profile")
@@ -338,7 +272,7 @@ class RecorderGUI:
         self.profile_var = tk.StringVar(value=default_profile)
 
         self.profile_menu = ctk.CTkOptionMenu(
-            card,
+            left,
             values=profiles,
             variable=self.profile_var,
             font=self.font_normal,
@@ -346,45 +280,128 @@ class RecorderGUI:
             dynamic_resizing=False,
             command=self._on_profile_changed
         )
-        self.profile_menu.grid(row=1, column=0, sticky="ew", padx=(20, 8), pady=6)
+        self.profile_menu.grid(row=0, column=0, sticky="ew", padx=(0, 8), pady=(0, 6))
 
         self.btn_save_profile = self._outline_button(
-            card, "Save profile", self._save_profile,
+            left, "Save profile", self._save_profile,
             width=110,
             height=32
         )
-        self.btn_save_profile.grid(row=1, column=1, padx=(0, 20), pady=6)
+        self.btn_save_profile.grid(row=0, column=1, pady=(0, 6))
 
         # Output directory (editable)
         ctk.CTkLabel(
-            card,
-            text="Output folder",
+            left,
+            text="Output mcap folder",
             font=ctk.CTkFont(size=13),
             text_color=TEXT_SECONDARY,
             anchor="w"
-        ).grid(row=2, column=0, columnspan=2, sticky="ew", padx=20, pady=(6, 0))
+        ).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
 
         self.output_var = tk.StringVar(value=str(self.config.get_output_directory()))
         self.entry_output = ctk.CTkEntry(
-            card,
+            left,
             textvariable=self.output_var,
             font=ctk.CTkFont(size=13),
             height=30
         )
-        self.entry_output.grid(row=3, column=0, sticky="ew", padx=(20, 8), pady=(4, 16))
+        self.entry_output.grid(row=2, column=0, sticky="ew", padx=(0, 8), pady=(4, 6))
 
         self.btn_browse = self._filled_button(
-            card, "Browse", self._edit_output_directory,
+            left, "Browse", self._edit_output_directory,
             width=110,
             height=30
         )
-        self.btn_browse.grid(row=3, column=1, padx=(0, 20), pady=(4, 16))
+        self.btn_browse.grid(row=2, column=1, pady=(4, 6))
+
+        # Daily sub-folder, e.g. <output>/2026_10_16_bosch01/
+        self.daily_subfolder_var = tk.BooleanVar(value=False)
+        self.chk_daily_subfolder = ctk.CTkCheckBox(
+            left,
+            text="Create daily sub-folder for mcaps",
+            variable=self.daily_subfolder_var,
+            font=ctk.CTkFont(size=13),
+            checkbox_width=20,
+            checkbox_height=20,
+            command=self._on_daily_subfolder_toggled
+        )
+        self.chk_daily_subfolder.grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+        # Right: ros2 bag record options and the recording name
+        options_box = ctk.CTkFrame(card, fg_color=BG_INSET, corner_radius=6)
+        options_box.grid(row=1, column=1, sticky="nsew", padx=(12, 20), pady=(0, 16))
+        options_box.grid_rowconfigure((0, 5), weight=1)
+        options_box.grid_columnconfigure(1, weight=1)
+
+        labels = ("maxCache", "storagePreset", "output_prefix", "date_profile")
+        for row, label in enumerate(labels, 1):
+            ctk.CTkLabel(
+                options_box,
+                text=label,
+                font=self.font_mono,
+                text_color=TEXT_SECONDARY,
+                height=18,
+                anchor="w"
+            ).grid(row=row, column=0, sticky="w", padx=(14, 12), pady=3)
+
+        # Cache size is edited in MB, the configuration keeps bytes
+        cache_box = ctk.CTkFrame(options_box, fg_color="transparent")
+        cache_box.grid(row=1, column=1, sticky="ew", padx=(0, 14), pady=3)
+        cache_box.grid_columnconfigure(0, weight=1)
+
+        self.cache_size_var = tk.StringVar()
+        self.entry_cache_size = ctk.CTkEntry(
+            cache_box,
+            textvariable=self.cache_size_var,
+            font=self.font_mono,
+            width=80,
+            height=26
+        )
+        self.entry_cache_size.grid(row=0, column=0, sticky="ew")
+        self.entry_cache_size.bind("<Return>", self._on_cache_size_edited)
+        self.entry_cache_size.bind("<FocusOut>", self._on_cache_size_edited)
+        ctk.CTkLabel(
+            cache_box, text="MB", font=self.font_mono, height=18, anchor="e"
+        ).grid(row=0, column=1, sticky="e", padx=(6, 0))
+
+        # Dropdowns, the values are passed to ros2 bag record as they are
+        self.option_vars: Dict[str, tk.StringVar] = {}
+        self.option_menus: Dict[str, ctk.CTkOptionMenu] = {}
+        for row, (key, values) in enumerate((("storage_preset", STORAGE_PRESETS),), 2):
+            self.option_vars[key] = tk.StringVar()
+            menu = ctk.CTkOptionMenu(
+                options_box,
+                values=[value or NO_OPTION for value in values],
+                variable=self.option_vars[key],
+                font=self.font_mono,
+                dropdown_font=self.font_mono,
+                height=26,
+                dynamic_resizing=False,
+                command=lambda value, key=key: self._on_option_selected(key, value)
+            )
+            menu.grid(row=row, column=1, sticky="ew", padx=(0, 14), pady=3)
+            self.option_menus[key] = menu
+
+        # Recording name: <output_prefix>_<date_profile>.mcap
+        self.name_vars: Dict[str, tk.StringVar] = {}
+        self.name_entries: Dict[str, ctk.CTkEntry] = {}
+        for row, key in enumerate(("output_prefix", "date_profile"), 3):
+            self.name_vars[key] = tk.StringVar()
+            entry = ctk.CTkEntry(
+                options_box,
+                textvariable=self.name_vars[key],
+                font=self.font_mono,
+                height=26
+            )
+            entry.grid(row=row, column=1, sticky="ew", padx=(0, 14), pady=3)
+            entry.bind("<KeyRelease>", lambda e, key=key: self._on_name_edited(key))
+            self.name_entries[key] = entry
 
     def _create_topics_card(self, content):
         """Create the topic selection card."""
         # ─ Search and Topic List ───────────────────────────────────────────────
         card = ctk.CTkFrame(content, corner_radius=8)
-        card.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=10, pady=10)
+        card.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
         card.grid_columnconfigure(0, weight=1)
         card.grid_rowconfigure(2, weight=1)
 
@@ -443,7 +460,7 @@ class RecorderGUI:
         """Create the bottom card showing the record command."""
         # ─ Record Command ──────────────────────────────────────────────────────
         card = ctk.CTkFrame(content, corner_radius=8)
-        card.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=10, pady=10)
+        card.grid(row=2, column=0, sticky="nsew", padx=10, pady=10)
         card.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(
@@ -648,6 +665,9 @@ class RecorderGUI:
             output_dir = profile_data["output_directory"]
             self.config.set("output.directory", output_dir)
             self.output_var.set(output_dir)
+        self.daily_subfolder_var.set(self.config.get_daily_subfolder(profile_name))
+        for key, value in self.config.get_name_options(profile_name).items():
+            self.name_vars[key].set(value)
 
         record_options = self.config.get_record_options(profile_name)
         self.cache_size_var.set(f"{int(record_options['max_cache_size']) / BYTES_PER_MB:g}")
@@ -763,8 +783,14 @@ class RecorderGUI:
         if not output_dir.exists():
             return None
 
-        recordings = [p.parent for p in output_dir.glob("*/metadata.yaml")]
-        recordings += list(output_dir.glob("*.mcap"))
+        # Directly in the output folder or in a daily sub-folder
+        recordings = []
+        for pattern in ("*", "*/*"):
+            recordings += [p.parent for p in output_dir.glob(f"{pattern}/metadata.yaml")]
+            recordings += [
+                p for p in output_dir.glob(f"{pattern}.mcap")
+                if not (p.parent / "metadata.yaml").exists()
+            ]
         if not recordings:
             return None
 
@@ -799,6 +825,8 @@ class RecorderGUI:
                     messagebox.showwarning("Not Found", "Foxglove is not installed.")
                     return
                 subprocess.Popen([foxglove, str(mcap_file)])
+            elif tool == "Upload to Kleinkram":
+                KleinkramUploadDialog(self.root, mcap_file, self.font_mono)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to run tool: {e}")
 
@@ -833,6 +861,8 @@ class RecorderGUI:
         profile_data = dict(self.config.get_profile(name) or self.config.get_profile(current))
         profile_data["topics"] = sorted(self.selected_topics)
         profile_data["output_directory"] = self.output_var.get().strip()
+        profile_data["daily_subfolder"] = self.daily_subfolder_var.get()
+        profile_data.update(self.config.get_name_options(current))
         self.config.set(f"recording.profiles.{name}", profile_data)
 
         # The packaged YAML stays untouched, the user config is searched first
@@ -864,6 +894,20 @@ class RecorderGUI:
             # Not a size, show the one in use again
             size = int(self.config.get_record_options(profile)["max_cache_size"])
         self.cache_size_var.set(f"{size / BYTES_PER_MB:g}")
+        self._update_command()
+
+    def _on_name_edited(self, key: str):
+        """Apply a typed output_prefix or date_profile to the current profile."""
+        self.config.set_record_option(
+            self.profile_var.get(), key, self.name_vars[key].get().strip()
+        )
+        self._update_command()
+
+    def _on_daily_subfolder_toggled(self):
+        """Apply the daily sub-folder checkbox to the current profile."""
+        self.config.set_record_option(
+            self.profile_var.get(), "daily_subfolder", self.daily_subfolder_var.get()
+        )
         self._update_command()
 
     def _on_output_edited(self, event=None):
@@ -957,6 +1001,7 @@ class RecorderGUI:
         locked = "disabled" if recording else "normal"
         for widget in (
             self.profile_menu, self.btn_save_profile, self.entry_output, self.btn_browse,
+            self.chk_daily_subfolder, *self.name_entries.values(),
             self.entry_cache_size, *self.option_menus.values(),
             *self.topic_boxes.values()
         ):

@@ -140,6 +140,34 @@ class RecRecorderNode(Node):
         else:
             self.get_logger().info("No active recording process to stop")
 
+        if self.last_output:
+            try:
+                self.last_output = self._flatten_recording(self.last_output)
+            except OSError as e:
+                self.get_logger().error(f"Failed to move the .mcap out of {self.last_output}: {e}")
+
+    def _flatten_recording(self, bag_dir: Path) -> Path:
+        """
+        Replace the rosbag2 folder <name>.mcap/ with the single .mcap file it holds.
+
+        ros2 bag record always writes <name>.mcap/<name>.mcap_0.mcap and a
+        metadata.yaml, rosbag2, mcap and Foxglove all read the .mcap alone.
+        Folders with split or other files are kept as they are.
+        """
+        if not bag_dir.is_dir():
+            return bag_dir
+        files = [p for p in bag_dir.iterdir() if p.name != "metadata.yaml"]
+        if len(files) != 1 or files[0].suffix != ".mcap":
+            return bag_dir
+
+        temporary = bag_dir.with_name(bag_dir.name + ".part")
+        files[0].replace(temporary)
+        (bag_dir / "metadata.yaml").unlink(missing_ok=True)
+        bag_dir.rmdir()
+        temporary.replace(bag_dir)
+        self.get_logger().info(f"Recording saved to {bag_dir}")
+        return bag_dir
+
 
 def main(args=None):
     """Main entry point for the rec_gui node."""

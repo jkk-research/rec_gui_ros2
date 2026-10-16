@@ -1,4 +1,4 @@
-# REC GUI - MCAP Recording GUI for ROS 2
+# `rec_gui` - MCAP Recording GUI for ROS 2
 
 A graphical user interface for recording and managing MCAP (Multi-CAN Artifact Protocol) recordings from ROS 2 topics.
 
@@ -8,7 +8,7 @@ A graphical user interface for recording and managing MCAP (Multi-CAN Artifact P
 - **Recording profiles**: Pre-configured recording profiles (default, high compression, low latency)
 - **Status indicators**: Real-time display of recording state and duration
 - **YAML configuration**: Flexible configuration system for customizing behavior
-- **MCAP format support**: Built-in support for MCAP recording format with configurable compression
+- **MCAP format support**: Built-in support for MCAP recording format with chunk compression (storage presets)
 - **Dark theme**: Modern dark UI with accent colors for better usability
 
 ## Prerequisites
@@ -104,7 +104,9 @@ The YAML configuration file (`rec_gui.yaml`) contains settings for:
 ```yaml
 output:
   directory: "${HOME}/.rec_gui/recordings"
-  filename_template: "recording_{timestamp}.mcap"
+  output_prefix: "recording"            # <output_prefix>_<date_profile>.mcap
+  date_profile: "yyyy-MM-dd_HH-mm-ss"   # yyyy yy MM dd HH mm ss (MM month, mm minutes) or %Y-%m-%d...
+  daily_subfolder: false                # <directory>/2026_10_16_<profile>/
   auto_create: true
 ```
 
@@ -119,10 +121,7 @@ recording:
 
   # ros2 bag record options, profiles can override each of them
   max_cache_size: 5242880       # --max-cache-size, 5 MB
-  storage_preset: "zstd_fast"   # --storage-preset-profile
-  compression_mode: "file"      # --compression-mode
-  compression_format: "zstd"    # --compression-format, only with a compression mode
-  compression_level: "fastest"  # --compression-level, left out if empty
+  storage_preset: "zstd_fast"   # --storage-preset-profile, zstd_* compress the MCAP chunks
 ```
 
 ### Topic Configuration

@@ -1,21 +1,25 @@
-# REC GUI Configuration File
+# rec_gui Configuration File
 # Default settings for the MCAP Recording GUI
 
 output:
   # Default output directory for recordings
   directory: "${HOME}/.rec_gui/recordings"
-  # Naming convention for output files: {timestamp}, {date}, {time}
-  filename_template: "recording_{timestamp}.mcap"
+  # Recordings are named <output_prefix>_<date_profile>.mcap, profiles can
+  # override both. date_profile: yyyy yy MM dd HH mm ss (MM month, mm minutes)
+  # or Python strftime codes (%Y-%m-%d_%H-%M-%S)
+  output_prefix: "recording"
+  date_profile: "yyyy-MM-dd_HH-mm"
   # Auto-create output directory if it doesn't exist
   auto_create: true
+  # Put recordings into a daily sub-folder, e.g. 2026_10_16_bosch01/
+  # (a profile can override it with its own daily_subfolder key)
+  daily_subfolder: true
 
 recording:
   default_profile: default
   profiles:
     bosch01:
-      compression_format: zstd
-      compression_level: fastest
-      compression_mode: file  
+      date_profile: yyyy-MM-dd_HH-mm
       description: Bosch01 - Lexus3 configuration
       max_cache_size: 5242880
       output_directory: /mnt/bag/
@@ -35,9 +39,7 @@ recording:
       - /tf
       - /tf_static
     crp_radar01:
-      compression_format: zstd 
-      compression_level: fast
-      compression_mode: file
+      date_profile: yyyy-MM-dd_HH-mm
       description: CRP radar configuration
       max_cache_size: 5242880 
       storage_preset: zstd_fast
@@ -51,17 +53,13 @@ recording:
       - /vehicle/throttle
       - /vehicle/brake
     default:  
-      compression_format: zstd
-      compression_level: fastest
-      compression_mode: file
+      date_profile: yyyy-MM-dd_HH-mm
       description: Default recording profile - all topics 
       max_cache_size: 4194304
       storage_preset: zstd_fast
       topics: []
     kaposvar01:
-      compression_format: zstd
-      compression_level: fastest 
-      compression_mode: file
+      date_profile: yyyy-MM-dd_HH-mm-ss
       description: Kaposvar01 configuration
       max_cache_size: 7340032
       storage_preset: zstd_fast  
@@ -73,9 +71,7 @@ recording:
       - /tf
       - /tf_static
     lexus_cam_calib:
-      compression_format: fake_comp
-      compression_level: fastest
-      compression_mode: none 
+      date_profile: yyyy-MM-dd_HH-mm
       description: Lexus camera calibration setup
       max_cache_size: 9437184
       storage_preset: zstd_fast
@@ -87,9 +83,7 @@ recording:
       - /lexus3/zed2i/zed_node/depth/camera_info 
       - /lexus3/zed2i/zed_node/depth/depth_registered
     lexus_slam01:
-      compression_format: zstd
-      compression_level: fastest 
-      compression_mode: file
+      date_profile: yyyy-MM-dd_HH-mm
       description: Lexus SLAM configuration
       max_cache_size: 5242880
       storage_preset: zstd_fast
@@ -102,9 +96,7 @@ recording:
       - /lexus3/zed2i/zed_node/left/image_rect_color/compressed
       - /lexus3/zed2i/zed_node/left/camera_info
     localization:
-      compression_format: zstd 
-      compression_level: slow
-      compression_mode: message
+      date_profile: yyyy-MM-dd_HH-mm
       description: General localization topics
       max_cache_size: 10485760
       storage_preset: zstd_fast  
@@ -116,9 +108,7 @@ recording:
       - /tf
       - /tf_static
     wheeltec01:
-      compression_format: zstd
-      compression_level: fastest
-      compression_mode: file 
+      date_profile: yyyy-MM-dd_HH-mm
       description: Wheeltec01 configuration
       max_cache_size: 8388608
       storage_preset: zstd_fast
