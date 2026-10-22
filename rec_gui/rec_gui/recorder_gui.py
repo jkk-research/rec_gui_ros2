@@ -27,6 +27,7 @@ ACCENT_BLUE_HOVER = ("#36719F", "#144870")
 ACCENT_BLUE_OFF = ("#9DC3E2", "#3A5F7D")
 ACCENT_GREEN = ("#2CC985", "#2FA572")
 ACCENT_RED = ("#D9443C", "#E5534B")
+ACCENT_RED_HOVER = ("#B93630", "#C9443D")
 ACCENT_ORANGE = "#FF9800"
 STOP_RED = "#C0392B"
 STOP_RED_HOVER = "#A93226"
@@ -610,15 +611,23 @@ class RecorderGUI:
                 checkbox_width=20,
                 checkbox_height=20,
                 border_width=2,
+                border_color=BORDER_COLOR,
                 corner_radius=5,
+                fg_color=ACCENT_BLUE,
+                hover_color=ACCENT_BLUE_HOVER,
                 state="disabled" if locked else "normal",
                 command=lambda t=topic: self._on_topic_toggled(t)
             )
 
         for topic, box in self.topic_boxes.items():
             self.topic_vars[topic].set(topic in self.selected_topics)
+            missing = topic not in self.available_topics
             box.configure(
-                text_color=TEXT_PRIMARY if topic in self.available_topics else TEXT_SECONDARY
+                text_color=TEXT_SECONDARY if missing else TEXT_PRIMARY,
+                border_width=3 if missing else 2,
+                border_color=ACCENT_RED if missing else BORDER_COLOR,
+                fg_color=ACCENT_RED if missing else ACCENT_BLUE,
+                hover_color=ACCENT_RED_HOVER if missing else ACCENT_BLUE_HOVER
             )
 
         self._on_topics_resized()
