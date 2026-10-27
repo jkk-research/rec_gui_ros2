@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="rec_gui/resource/rec_gui01.png" alt="rec_gui" width="600">
+  <img src="rec_gui/resource/rec_gui02.png" alt="rec_gui" width="600">
 </p>
 
 # Installation
