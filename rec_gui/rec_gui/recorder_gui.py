@@ -66,6 +66,7 @@ class RecorderGUI:
             f"x{self.config.get('gui.window_height', 760)}"
         )
         self.root.minsize(860, 600)
+        self._set_window_icon()
 
         self.recording_state = RecordingState.IDLE
         self.current_recording_start_time: Optional[datetime] = None
@@ -90,6 +91,24 @@ class RecorderGUI:
         self._on_profile_changed()
         self._refresh_topics()
         self._start_gui_updates()
+
+    def _set_window_icon(self):
+        """Use icon14.png as the window and taskbar icon."""
+        here = Path(__file__).resolve().parent
+        candidates = (
+            here.parent / "resource" / "icon14.png",  # source tree
+            here.parents[3] / "share" / "rec_gui" / "icon14.png",  # install
+        )
+        icon_path = next((p for p in candidates if p.is_file()), None)
+        if icon_path is None:
+            return
+        try:
+            image = tk.PhotoImage(file=str(icon_path))
+            # Window managers pick the best fitting size from the list
+            self._icons = [image.subsample(f) for f in (5, 10, 20)]
+            self.root.iconphoto(True, *self._icons)
+        except tk.TclError as e:
+            print(f"Could not load window icon: {e}")
 
     # ─ Widget helpers ──────────────────────────────────────────────────────────
     def _filled_button(self, master, text: str, command, **kwargs) -> ctk.CTkButton:
@@ -499,10 +518,9 @@ class RecorderGUI:
         self.search_entry.bind("<KeyRelease>", self._on_search)
         self.entry_output.bind("<Return>", self._on_output_edited)
         self.entry_output.bind("<FocusOut>", self._on_output_edited)
-        self.topics_frame.bind("<Configure>", self._on_topics_resized)
-        # CTkScrollableFrame only handles <MouseWheel>, X11 sends Button-4/5
-        self.root.bind_all("<Button-4>", lambda e: self._on_mouse_wheel(e, -1), add="+")
-        self.root.bind_all("<Button-5>", lambda e: self._on_mouse_wheel(e, 1), add="+")
+        # add="+" keeps CTkScrollableFrame's own <Configure> binding, which
+        # updates the scroll region (it also handles the X11 mouse wheel)
+        self.topics_frame.bind("<Configure>", self._on_topics_resized, add="+")
 
     def _start_gui_updates(self):
         """Start periodic GUI updates."""
@@ -583,12 +601,6 @@ class RecorderGUI:
             )
         self.topic_columns = columns
         self._on_search()
-
-    def _on_mouse_wheel(self, event, direction: int):
-        """Scroll the topic list with the mouse wheel on X11."""
-        widget = self.root.winfo_containing(event.x_root, event.y_root)
-        if widget and str(widget).startswith(str(self.topics_frame._parent_frame)):
-            self.topics_frame._parent_canvas.yview_scroll(direction, "units")
 
     def _rebuild_topics(self):
         """Sync the checkboxes with the available and selected topics."""

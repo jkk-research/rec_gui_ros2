@@ -18,7 +18,7 @@ setup(
         ),
         (
             f"share/{package_name}",
-            ["package.xml", "resource/rec_gui.yaml"],
+            ["package.xml", "resource/rec_gui.yaml", "resource/icon14.png"],
         ),
         ("bin", ["scripts/rec_gui"]),
     ],
