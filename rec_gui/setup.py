@@ -39,7 +39,6 @@ setup(
     maintainer_email="you@example.com",
     url="https://github.com/jkk-research/rec_gui",
     description="A graphical user interface for MCAP recording with ROS 2",
-    long_description=open("README.md").read() if open("README.md").read() else "",
     long_description_content_type="text/markdown",
     license="Apache License 2.0",
     classifiers=[
