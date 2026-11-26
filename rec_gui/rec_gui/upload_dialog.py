@@ -1,7 +1,10 @@
 """Popup window uploading a recording to Kleinkram with the klein CLI."""
 
+import os
 import shlex
+import shutil
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -11,6 +14,15 @@ import customtkinter as ctk
 NO_CHOICE = "-"
 TEXT_SECONDARY = ("gray40", "#9A9A9A")
 BG_INSET = ("#F9F9FA", "#1D1E1E")
+
+# Terminal emulators tried in order, with the arguments preceding the command
+TERMINALS = (
+    ("x-terminal-emulator", ["-e"]),
+    ("gnome-terminal", ["--"]),
+    ("konsole", ["-e"]),
+    ("xfce4-terminal", ["-x"]),
+    ("xterm", ["-fa", "Monospace", "-fs", "11", "-geometry", "110x24", "-e"]),
+)
 
 # Project and mission picked last, offered again in the next popup
 _last_choice: Dict[str, str] = {}
@@ -165,10 +177,75 @@ class KleinkramUploadDialog:
         self.progress.pack(side="left", fill="x", expand=True, padx=(0, 4))
         self.progress.start()
 
-        def upload():
-            return subprocess.run(command, capture_output=True, text=True)
+        terminal = self._terminal_command(command)
+        if terminal is None:
+            # No terminal emulator: run hidden, the output appears at the end
+            def upload():
+                return subprocess.run(command, capture_output=True, text=True)
 
-        self._run_in_background(upload, lambda result: self._on_uploaded(command, result))
+            self._run_in_background(upload, lambda result: self._on_uploaded(command, result))
+            return
+
+        self.lbl_status.configure(text="Uploading… (progress in the terminal window)")
+        self._show_output(f"$ {shlex.join(command)}\n\nProgress is shown in the terminal window.")
+        try:
+            process = subprocess.Popen(terminal[0])
+        except OSError as e:
+            self._on_uploaded(command, e)
+            return
+        self._poll_terminal(command, process, terminal[1])
+
+    @staticmethod
+    def _terminal_command(command: List[str]):
+        """A terminal emulator command running command, and the exit code file.
+
+        The terminal stays open after the upload so its output can be read; the exit
+        code is written to a file to tell the dialog how it went. None if there is
+        no terminal emulator.
+        """
+        for name, args in TERMINALS:
+            if shutil.which(name):
+                break
+        else:
+            return None
+        fd, code_file = tempfile.mkstemp(prefix="klein_upload_", suffix=".code")
+        os.close(fd)
+        os.remove(code_file)
+        script = (
+            f"echo '$ '{shlex.quote(shlex.join(command))}; echo; "
+            f"{shlex.join(command)}; code=$?; "
+            f"echo $code > {shlex.quote(code_file)}; echo; "
+            'if [ $code -eq 0 ]; then echo "Upload finished."; '
+            'else echo "Upload failed (exit code $code)."; fi; '
+            'read -r -p "Press Enter to close this window." _'
+        )
+        return [name, *args, "bash", "-c", script], Path(code_file)
+
+    def _poll_terminal(self, command: List[str], process: subprocess.Popen,
+                       code_file: Path, polls_since_exit: int = 0):
+        """Wait for the upload in the terminal to end, then show how it went."""
+        if not self.window.winfo_exists():
+            return
+        if code_file.exists():
+            try:
+                returncode = int(code_file.read_text().strip())
+            except ValueError:
+                returncode = 1
+            code_file.unlink(missing_ok=True)
+            self._on_uploaded(command, subprocess.CompletedProcess(
+                command, returncode, "See the terminal window for the output.", ""
+            ))
+            return
+        if process.poll() is not None:
+            # Some terminals (gnome-terminal) hand the window over to a server and
+            # exit at once, so only give up if no exit code arrives for a while
+            polls_since_exit += 1
+            if polls_since_exit > 10 and process.args[0] != "gnome-terminal":
+                self._on_uploaded(command, RuntimeError(
+                    "The terminal window was closed before the upload finished."
+                ))
+                return
+        self.window.after(500, self._poll_terminal, command, process, code_file, polls_since_exit)
 
     def _on_uploaded(self, command: List[str], result):
         """Show how the upload went."""
